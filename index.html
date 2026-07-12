@@ -41,9 +41,9 @@
 <body>
 <div id="overlay">
   <h1>VirtualUP</h1>
-  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then survive 55 unique floating levels — switchbacks, spirals, tightropes, walls, treetops, and moving platforms that slide, bob, and orbit. Every level is different, and they get harder as you rise. Fall and you start over at the bottom.</p>
+  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then survive 55 unique floating levels — switchbacks, spirals, tightropes, walls, treetops, and moving platforms that slide, bob, and orbit. Every level is different, and they get harder as you rise. Levels 1–14 climb through the jungle sky — then a spaceship carries you to a second map floating in space, where the glowing levels 15–55 finish the run.</p>
   <button id="vrbtn" disabled>CHECKING VR…</button>
-  <button id="mobilebtn">Play on phone — move phone to look</button>
+  <button id="mobilebtn">Fly the map on your phone — move phone to look</button>
   <button id="flatbtn">Preview on flat screen</button>
   <p style="font-size:13px;color:#7fae8c">On Quest 3S: open this page in the headset's browser, then press ENTER VR.</p>
 </div>
@@ -72,7 +72,8 @@
   const sun = new THREE.DirectionalLight(0xfff3d6, 1.0);
   sun.position.set(20, 60, 10);
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0xbfe8ff, 0x2c5232, 0.85));
+  const hemi = new THREE.HemisphereLight(0xbfe8ff, 0x2c5232, 0.85);
+  scene.add(hemi);
 
   const camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.05, 400);
 
@@ -284,7 +285,59 @@
     { k: 'gauntlet', m: [matStar, matObsidian, matGold] } // 55 The Final Gauntlet
   ];
 
+  // ---------- the spaceship + the second map ----------
+  // After level 14 (the elevators), a ship waits. Step inside and you're
+  // flown to THE SPACE MAP — a totally separate island 2km away where
+  // levels 15–55 live. The jungle map keeps everything below.
+  let inSpace = false, teleported = false;
+  let shipTrigger = null;
+  const SPACE_SPAWN = new THREE.Vector3(2000, 30.26, 0.8);
+
+  function buildSpaceport() {
+    // landing pad at the end of the jungle climb
+    step(0.9, 1.0, 1.2, 1.5);
+    addBox(px, py, pz, 3.6, 0.5, 3.6, matSlate);
+    const fy = py + 0.25;
+    // the ship: a hull with an open door facing the pad
+    addBox(px, fy + 0.1, pz, 2.0, 0.2, 2.6, matSlate);         // floor
+    addBox(px, fy + 2.2, pz, 2.0, 0.2, 2.6, matSlate);         // roof
+    addBox(px - 1.1, fy + 1.2, pz, 0.2, 2.0, 2.6, matSlate);   // left wall
+    addBox(px + 1.1, fy + 1.2, pz, 0.2, 2.0, 2.6, matSlate);   // right wall
+    addBox(px, fy + 1.2, pz + 1.3, 2.0, 2.0, 0.2, matSlate);   // back wall — the front is the open door
+    // glowing window strips + nose cone (decor)
+    const win1 = new THREE.Mesh(unitBox, matCrystal);
+    win1.position.set(px - 1.16, fy + 1.5, pz); win1.scale.set(0.08, 0.3, 1.8);
+    win1.updateMatrix(); win1.matrixAutoUpdate = false;
+    const win2 = new THREE.Mesh(unitBox, matCrystal);
+    win2.position.set(px + 1.16, fy + 1.5, pz); win2.scale.set(0.08, 0.3, 1.8);
+    win2.updateMatrix(); win2.matrixAutoUpdate = false;
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(1.1, 1.6, 8), matCoral);
+    nose.position.set(px, fy + 3.1, pz);
+    nose.updateMatrix(); nose.matrixAutoUpdate = false;
+    scene.add(win1, win2, nose);
+    // walk inside — head in this volume launches the ship
+    shipTrigger = {
+      min: new THREE.Vector3(px - 0.9, fy + 0.2, pz - 1.05),
+      max: new THREE.Vector3(px + 0.9, fy + 2.0, pz + 1.15)
+    };
+
+    // ---- THE SPACE MAP starts here: 2km away, its own little world ----
+    px = 2000; pz = 0; py = 30; heading = rnd() * 6.28;
+    addBox(px, py, pz, 4.2, 0.5, 4.2, matObsidian); // arrival pad
+    pathPts.push({ x: px, y: py, z: pz });
+    // the ship that brought you, parked at the pad's edge (decor)
+    const hull = new THREE.Mesh(unitBox, matSlate);
+    hull.position.set(px, py + 1.4, pz - 2.9); hull.scale.set(2.0, 2.2, 2.4);
+    hull.updateMatrix(); hull.matrixAutoUpdate = false;
+    const nose2 = new THREE.Mesh(new THREE.ConeGeometry(1.1, 1.6, 8), matCoral);
+    nose2.position.set(px, py + 3.3, pz - 2.9);
+    nose2.updateMatrix(); nose2.matrixAutoUpdate = false;
+    scene.add(hull, nose2);
+    py += 1.2;
+  }
+
   for (let z = 0; z < LEVELS.length; z++) {
+    if (z === 14) buildSpaceport(); // levels 1–14 are jungle; 15+ live on the space map
     const L = LEVELS[z];
     const t = Math.min(z / 20, 1);                     // 0 easy → 1 max difficulty
     const g0 = 1.1 + t * 0.3,  g1 = 1.5 + t * 0.4;     // climbs up to [1.4, 1.9]
@@ -476,6 +529,106 @@
     scene.add(trunk, crown);
   }
 
+  // ---------- SPACE VISUALS ----------
+  // The space look belongs to the space MAP now, not to altitude:
+  // purple void, stars out, sun dimmed, every platform glowing.
+  const skyCol = new THREE.Color(0x87c5e8);
+  const spaceCol = new THREE.Color(0x241048);
+
+  // star field rides with the player like a distant sky sphere
+  const starMat = new THREE.PointsMaterial({
+    color: 0xffffff, size: 1.4, transparent: true, opacity: 0,
+    sizeAttenuation: true, depthWrite: false
+  });
+  {
+    const N = 900;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      // random direction, pushed out to a far shell
+      let vx = rnd() * 2 - 1, vy = rnd() * 2 - 1, vz = rnd() * 2 - 1;
+      const len = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+      const R = 90 + rnd() * 60;
+      pos[i * 3] = vx / len * R; pos[i * 3 + 1] = vy / len * R; pos[i * 3 + 2] = vz / len * R;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const stars = new THREE.Points(starGeo, starMat);
+    stars.frustumCulled = false;
+    rig.add(stars);
+  }
+
+  // plain materials that will glow in space (emissive ones already shine)
+  const glowMats = [];
+  [matRock, matRock2, matMoss, matWood, matSand, matMush, matStem, matStorm,
+   matBeam2, matPink, matPurple, matCopper, matEmerald, matSnow, matHoney,
+   matCoral, matMint, matSlate, leafMat, trunkMat].concat(rainbowMats)
+    .forEach(m => glowMats.push({ mat: m, col: m.color.clone() }));
+
+  let lastSpaceF = -1;
+  let spaceF = 0;
+  function applySpace(f) {
+    scene.background.copy(skyCol).lerp(spaceCol, f);
+    scene.fog.color.copy(scene.background);
+    sun.intensity = 1.0 - 0.7 * f;
+    hemi.intensity = 0.85 - 0.5 * f;
+    starMat.opacity = f;
+    for (const g of glowMats) {
+      g.mat.emissive.copy(g.col).multiplyScalar(0.8 * f); // blocks light up
+    }
+  }
+
+  // ---------- the blackout teleport ----------
+  // Board the ship → screen fades to black, all sound stops,
+  // a few silent seconds pass, then you wake up on the space map.
+  const fadeMat = new THREE.MeshBasicMaterial({
+    color: 0x000000, side: THREE.BackSide, transparent: true, opacity: 0, depthTest: false
+  });
+  const fadeSphere = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12), fadeMat);
+  fadeSphere.renderOrder = 1001;
+  fadeSphere.frustumCulled = false;
+  camera.add(fadeSphere);
+
+  let tp = null; // teleport state: 'out' → 'hold' → 'in'
+  function startTeleport() {
+    if (tp || teleported) return;
+    teleported = true;
+    tp = { phase: 'out', t: 0 };
+    if (audioCtx && audioCtx.state === 'running') audioCtx.suspend(); // silence
+  }
+  function doTeleport() {
+    rig.position.copy(SPACE_SPAWN);
+    velocity.set(0, 0, 0);
+    controllers.forEach(c => { c.prev = null; c.wasTouching = false; });
+    inSpace = true;
+  }
+  function updateTeleport(dt) {
+    if (!tp) return;
+    tp.t += dt;
+    if (tp.phase === 'out') {
+      fadeMat.opacity = Math.min(tp.t / 0.8, 1);
+      if (tp.t >= 0.8) { tp.phase = 'hold'; tp.t = 0; doTeleport(); }
+    } else if (tp.phase === 'hold') {
+      fadeMat.opacity = 1;
+      if (tp.t >= 2.5) {
+        tp.phase = 'in'; tp.t = 0;
+        if (audioCtx) audioCtx.resume(); // sound returns with the stars
+      }
+    } else {
+      fadeMat.opacity = Math.max(1 - tp.t / 0.8, 0);
+      if (tp.t >= 0.8) tp = null;
+    }
+  }
+  const _head = new THREE.Vector3();
+  function checkShipTrigger() {
+    if (!shipTrigger || teleported || tp) return;
+    camera.getWorldPosition(_head);
+    if (_head.x > shipTrigger.min.x && _head.x < shipTrigger.max.x &&
+        _head.y > shipTrigger.min.y && _head.y < shipTrigger.max.y &&
+        _head.z > shipTrigger.min.z && _head.z < shipTrigger.max.z) {
+      startTeleport();
+    }
+  }
+
   // ---------- VirtualUP splash (shows when VR starts) ----------
   const splashCvs = document.createElement('canvas');
   splashCvs.width = 1024; splashCvs.height = 256;
@@ -611,7 +764,14 @@
   }
 
   function respawnIfFallen() {
-    if (rig.position.y < -4) {
+    if (inSpace) {
+      // no ground out here — fall off the space map and you wake up back at the arrival pad
+      if (rig.position.y < 5) {
+        rig.position.copy(SPACE_SPAWN);
+        velocity.set(0, 0, 0);
+        controllers.forEach(c => c.prev = null);
+      }
+    } else if (rig.position.y < -4) {
       rig.position.copy(SPAWN);
       velocity.set(0, 0, 0);
       controllers.forEach(c => c.prev = null);
@@ -734,6 +894,7 @@
       mobile = true; flat = true;
       document.getElementById('overlay').style.display = 'none';
       document.getElementById('touchui').style.display = 'block';
+      document.getElementById('jumpbtn').textContent = 'UP';
       camera.position.set(0, EYE, 0);
       window.addEventListener('deviceorientation', e => { orientData = e; });
     };
@@ -806,17 +967,22 @@
     const move = new THREE.Vector3();
     let wantJump = false;
     if (mobile) {
+      // phone mode is a free-fly explorer: no gravity, no falling, just cruise the map
       updateDeviceLook();
-      _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
-      _fwd.y = 0;
+      _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion); // full 3D: aim the phone up to fly up
       if (_fwd.lengthSq() < 1e-4) _fwd.set(0, 0, -1);
       _fwd.normalize();
       _rgt.crossVectors(_fwd, UP);
+      if (_rgt.lengthSq() < 1e-4) _rgt.set(1, 0, 0);
+      _rgt.normalize();
       move.addScaledVector(_fwd, joy.y).addScaledVector(_rgt, joy.x);
       if (move.lengthSq() > 1) move.normalize();
-      move.multiplyScalar(4.2);
-      wantJump = jumpHeld;
-    } else {
+      move.multiplyScalar(9);
+      if (jumpHeld) move.y += 5; // UP button climbs
+      rig.position.addScaledVector(move, dt);
+      return;
+    }
+    {
       camera.rotation.set(pitch, yaw, 0, 'YXZ');
       const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
       const r = new THREE.Vector3(f.z, 0, -f.x);
@@ -865,8 +1031,15 @@
     const dt = Math.min(clock.getDelta(), 0.05);
     const t = clock.elapsedTime;
     updateMovers(t);
-    if (renderer.xr.isPresenting) updateVR(dt);
-    else if (flat) updateFlat(dt);
+    checkShipTrigger();
+    updateTeleport(dt);
+    // the space look belongs to the space map
+    const sfTarget = inSpace ? 1 : 0;
+    spaceF += (sfTarget - spaceF) * Math.min(dt * 2.5, 1);
+    if (Math.abs(spaceF - lastSpaceF) > 0.003) { applySpace(spaceF); lastSpaceF = spaceF; }
+    if (renderer.xr.isPresenting && !tp) updateVR(dt);
+    else if (renderer.xr.isPresenting) { /* frozen during the blackout */ }
+    else if (flat && !tp) updateFlat(dt);
     // gentle bobbing of the floating decor
     for (const f of floaters) {
       f.m.position.y = f.base + Math.sin(t * f.sp + f.ph) * 0.4;
