@@ -41,7 +41,7 @@
 <body>
 <div id="overlay">
   <h1>VirtualUP</h1>
-  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then survive 55 unique floating levels — switchbacks, spirals, tightropes, walls, treetops, and moving platforms that slide, bob, and orbit. Every level is different, and they get harder as you rise. Levels 1–14 climb through the jungle sky — then a spaceship carries you to a second map floating in space, where the glowing levels 15–55 finish the run.</p>
+  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then survive 55 unique floating levels — switchbacks, spirals, tightropes, walls, treetops, and moving platforms that slide, bob, and orbit. 150 levels. 1–14 climb the jungle sky — then a spaceship carries you to a second map floating in space with 136 structurally unique levels: monkey bars, chimneys, ferries, pyramids, mazes, tightropes, pistons, and more. No two levels play the same.</p>
   <button id="vrbtn" disabled>CHECKING VR…</button>
   <button id="mobilebtn">Fly the map on your phone — move phone to look</button>
   <button id="flatbtn">Preview on flat screen</button>
@@ -100,18 +100,48 @@
   const matGold  = new THREE.MeshLambertMaterial({ color: 0xffd23f, emissive: 0x6b5200 });
 
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
+  // Static boxes are batched into one merged mesh per material — with ~1100
+  // platforms across 150 levels, drawing them individually would melt the Quest.
+  const staticBoxes = [];
   function addBox(x, y, z, w, h, d, mat) {
-    const mesh = new THREE.Mesh(unitBox, mat);
-    mesh.position.set(x, y, z);
-    mesh.scale.set(w, h, d);
-    mesh.updateMatrix();
-    mesh.matrixAutoUpdate = false; // static world: skip per-frame matrix math for ~450 platforms
-    scene.add(mesh);
+    staticBoxes.push({ x, y, z, w, h, d, mat });
     colliders.push({
       min: new THREE.Vector3(x - w / 2, y - h / 2, z - d / 2),
       max: new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2)
     });
-    return mesh;
+  }
+  function buildStaticMeshes() {
+    const sp = unitBox.attributes.position.array;
+    const sn = unitBox.attributes.normal.array;
+    const si = unitBox.index.array;
+    const byMat = new Map();
+    for (const b of staticBoxes) {
+      if (!byMat.has(b.mat)) byMat.set(b.mat, []);
+      byMat.get(b.mat).push(b);
+    }
+    byMat.forEach((list, mat) => {
+      const vpb = sp.length / 3; // 24 verts per box
+      const pos = new Float32Array(list.length * vpb * 3);
+      const nor = new Float32Array(list.length * vpb * 3);
+      const idx = new Uint32Array(list.length * si.length);
+      list.forEach((b, k) => {
+        for (let v = 0; v < vpb; v++) {
+          const o = (k * vpb + v) * 3;
+          pos[o]     = sp[v * 3]     * b.w + b.x;
+          pos[o + 1] = sp[v * 3 + 1] * b.h + b.y;
+          pos[o + 2] = sp[v * 3 + 2] * b.d + b.z;
+          nor[o] = sn[v * 3]; nor[o + 1] = sn[v * 3 + 1]; nor[o + 2] = sn[v * 3 + 2];
+        }
+        for (let ii = 0; ii < si.length; ii++) idx[k * si.length + ii] = si[ii] + k * vpb;
+      });
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      g.setIndex(new THREE.BufferAttribute(idx, 1));
+      const mesh = new THREE.Mesh(g, mat);
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+    });
   }
 
   // jungle floor
@@ -180,12 +210,19 @@
 
   // ---------- moving platforms ----------
   const movers = [];
-  function addMover(x, y, z, w, h, d, mat, ax, ay, az, sp) {
-    const mesh = addBox(x, y, z, w, h, d, mat);
-    mesh.matrixAutoUpdate = true; // this one moves
-    const col = colliders[colliders.length - 1];
+  function addMover(x, y, z, w, h, d, mat, ax, ay, az, sp, ph) {
+    const mesh = new THREE.Mesh(unitBox, mat);
+    mesh.position.set(x, y, z);
+    mesh.scale.set(w, h, d);
+    scene.add(mesh);
+    const col = {
+      min: new THREE.Vector3(x - w / 2, y - h / 2, z - d / 2),
+      max: new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2)
+    };
+    colliders.push(col);
     const m = { mesh, col, cx: x, cy: y, cz: z, w, h, d, ax, ay, az, sp,
-                ph: rnd() * 6.28, delta: new THREE.Vector3(), prev: new THREE.Vector3(x, y, z) };
+                ph: (ph === undefined ? rnd() * 6.28 : ph),
+                delta: new THREE.Vector3(), prev: new THREE.Vector3(x, y, z) };
     col.mover = m;
     movers.push(m);
   }
@@ -224,9 +261,7 @@
   const rainbowMats = [0xe63946, 0xf77f24, 0xffd23f, 0x57cc57, 0x35a7ff, 0x7b5be6, 0xd05ce3]
     .map(c => new THREE.MeshLambertMaterial({ color: c }));
 
-  // ============ 55 UNIQUE FLOATING LEVELS ============
-  // k = mechanic, m = material(s). No two levels share the same mechanic+look.
-  // Moving platforms first appear at level 9 (~95m up).
+  // ============ THE JUNGLE LEVELS (1–14, unchanged) ============
   const LEVELS = [
     { k: 'slab',     m: [matRock, matRock2] },     // 1  Floating Rocks
     { k: 'beam',     m: [matWood], bt: 0.5 },      // 2  Wooden Beams
@@ -241,48 +276,7 @@
     { k: 'slab',     m: [matLava] },               // 11 Ember Stones
     { k: 'ring',     m: [matCrystal] },            // 12 Crystal Ring
     { k: 'longjump', m: [matCloud] },              // 13 Big Air
-    { k: 'moveV',    m: [matCopper] },             // 14 Copper Elevators
-    { k: 'bridge',   m: [matBeam2] },              // 15 The Tightrope
-    { k: 'tiny',     m: [matMint] },               // 16 Pebble Path
-    { k: 'column',   m: [matCrystal] },            // 17 Crystal Spires
-    { k: 'rainbow',  m: rainbowMats },             // 18 Rainbow Road
-    { k: 'orbit',    m: [matStorm] },              // 19 Storm Orbit
-    { k: 'wall',     m: [matSand] },               // 20 The Great Walls
-    { k: 'zigzag',   m: [matCoral] },              // 21 Coral Switchbacks
-    { k: 'tree',     cm: matPink },                // 22 Sakura Canopy
-    { k: 'beam',     m: [matObsidian], bt: 0.42 }, // 23 Obsidian Beams
-    { k: 'pairs',    m: [matIce] },                // 24 Frozen Twins
-    { k: 'moveH',    m: [matLava] },               // 25 Sliding Embers
-    { k: 'spiral',   m: [matCrystal] },            // 26 Crystal Corkscrew
-    { k: 'stairs',   m: [matSnow] },               // 27 Snow Steps
-    { k: 'longjump', m: [matStorm] },              // 28 Storm Leaps
-    { k: 'mushroom', cm: matPurple },              // 29 Wild Mushrooms
-    { k: 'orbit',    m: [matCloud] },              // 30 Cloud Carousel
-    { k: 'slab',     m: [matHoney] },              // 31 Honey Slabs
-    { k: 'ring',     m: rainbowMats },             // 32 Rainbow Ring
-    { k: 'wall',     m: [matStorm] },              // 33 Storm Walls
-    { k: 'bridge',   m: [matIce] },                // 34 Ice Tightrope
-    { k: 'moveV',    m: [matStar] },               // 35 Star Lifts
-    { k: 'tiny',     m: [matObsidian] },           // 36 Dark Pebbles
-    { k: 'zigzag',   m: [matEmerald] },            // 37 Emerald Switchbacks
-    { k: 'column',   m: [matObsidian] },           // 38 Obsidian Monoliths
-    { k: 'pairs',    m: [matLava] },               // 39 Twin Embers
-    { k: 'spiral',   m: [matSlate] },              // 40 Slate Corkscrew
-    { k: 'moveH',    m: [matCrystal] },            // 41 Gliding Crystals
-    { k: 'tree',     cm: matSnow },                // 42 Frozen Canopy
-    { k: 'longjump', m: [matStar] },               // 43 Star Leaps
-    { k: 'orbit',    m: [matIce] },                // 44 Ice Carousel
-    { k: 'beam',     m: [matPink], bt: 0.36 },     // 45 Sakura Beams
-    { k: 'wall',     m: [matCrystal] },            // 46 Crystal Walls
-    { k: 'ring',     m: [matStorm] },              // 47 Storm Ring
-    { k: 'mushroom', cm: matMint },                // 48 Mint Mushrooms
-    { k: 'moveV',    m: [matObsidian] },           // 49 Obsidian Elevators
-    { k: 'tiny',     m: [matStar] },               // 50 Star Pebbles
-    { k: 'machine',  m: [matCopper, matSlate] },   // 51 The Machine — every platform moves
-    { k: 'zigzag',   m: [matStar] },               // 52 Star Switchbacks
-    { k: 'spiral',   m: [matGold] },               // 53 Golden Corkscrew
-    { k: 'bridge',   m: [matStorm] },              // 54 The Last Tightrope
-    { k: 'gauntlet', m: [matStar, matObsidian, matGold] } // 55 The Final Gauntlet
+    { k: 'moveV',    m: [matCopper] }               // 14 Copper Elevators — then the ship
   ];
 
   // ---------- the spaceship + the second map ----------
@@ -337,7 +331,6 @@
   }
 
   for (let z = 0; z < LEVELS.length; z++) {
-    if (z === 14) buildSpaceport(); // levels 1–14 are jungle; 15+ live on the space map
     const L = LEVELS[z];
     const t = Math.min(z / 20, 1);                     // 0 easy → 1 max difficulty
     const g0 = 1.1 + t * 0.3,  g1 = 1.5 + t * 0.4;     // climbs up to [1.4, 1.9]
@@ -454,7 +447,326 @@
     }
 
     // a wider rest platform between levels — earn your breather
-    if (z < LEVELS.length - 1) {
+    step(1.1, 1.3, 1.0, 1.5);
+    addBox(px, py, pz, 2.0, 0.45, 2.0, matMoss);
+  }
+
+  // levels 1–14 done — board the ship, then 136 unique space levels await
+  buildSpaceport();
+  buildSpaceLevels();
+
+  // ============ THE SPACE LEVELS: 136, ALL STRUCTURALLY UNIQUE ============
+  // 35 genuinely different mechanics below. Each space level is a unique PAIR of
+  // two different mechanics (no pair ever repeats), plus 6 one-off signature
+  // levels. Different shapes, different moves, different routes — not palette swaps.
+  function buildSpaceLevels() {
+    const snapAxis = () => Math.abs(Math.cos(heading)) > Math.abs(Math.sin(heading));
+    const snapSign = ax => ((ax ? Math.cos(heading) : Math.sin(heading)) >= 0 ? 1 : -1);
+    const mark = () => pathPts.push({ x: px, y: py, z: pz });
+
+    const SEG = [
+      function hop(m, t) { // plain jumps
+        for (let i = 0; i < 3; i++) { step(1.1 + t * 0.3, 1.5 + t * 0.35, 1.0 + t * 0.2, 1.8 + t * 0.3); const s = 1.15 - t * 0.4; addBox(px, py, pz, s, 0.35, s, m); }
+      },
+      function planks(m, t) { // alternating thin beams
+        for (let i = 0; i < 3; i++) { step(1.1 + t * 0.25, 1.5 + t * 0.3, 1.1, 1.9); const a = i % 2 === 0; const bt = 0.5 - t * 0.15; addBox(px, py, pz, a ? 2.4 : bt, 0.25, a ? bt : 2.4, m); }
+      },
+      function crowns(m, t) { // treetop hops with cone canopies
+        for (let i = 0; i < 3; i++) {
+          step(1.2, 1.6, 1.2, 1.9);
+          const s = Math.max(1.05 - t * 0.25, 0.8);
+          const crown = new THREE.Mesh(new THREE.ConeGeometry(s * 1.4, 2.4, 7), m);
+          crown.position.set(px, py - 1.1, pz); crown.updateMatrix(); crown.matrixAutoUpdate = false;
+          scene.add(crown);
+          addBox(px, py, pz, s, 0.3, s, m);
+        }
+      },
+      function columnClimb(m, t) { // slab → tall wall-climb column → slab
+        step(1.1, 1.4, 1.1, 1.7); addBox(px, py, pz, 1.0, 0.35, 1.0, m);
+        step(1.2, 1.5, 1.1, 1.6); addBox(px, py + 1.0, pz, 0.8, 2.4, 0.8, m); py += 2.2; mark();
+        step(1.0, 1.3, 1.1, 1.6); addBox(px, py, pz, 1.0, 0.35, 1.0, m);
+      },
+      function shrooms(m, t) { // caps on stems
+        for (let i = 0; i < 3; i++) {
+          step(1.2, 1.6, 1.1, 1.8);
+          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, 1.6, 6), matStem);
+          stem.position.set(px, py - 1.0, pz); stem.updateMatrix(); stem.matrixAutoUpdate = false;
+          scene.add(stem);
+          addBox(px, py, pz, 1.0 - t * 0.25, 0.35, 1.0 - t * 0.25, m);
+        }
+      },
+      function zig(m, t) { // hard switchbacks
+        for (let i = 0; i < 4; i++) { stepTurn(i % 2 === 0 ? 1.4 : -1.4, 1.15, 1.5 + t * 0.3, 1.1, 1.9); const s = 1.0 - t * 0.3; addBox(px, py, pz, s, 0.35, s, m); }
+      },
+      function cork(m, t) { // tight corkscrew stairs
+        for (let i = 0; i < 5; i++) { stepTurn(0.85, 0.85, 1.05, 1.1, 1.3); addBox(px, py, pz, 0.75 - t * 0.1, 0.3, 0.75 - t * 0.1, m); }
+      },
+      function arc(m, t) { // wide curving ring
+        for (let i = 0; i < 4; i++) { stepTurn(0.4, 1.0, 1.25, 1.5, 1.7); const s = 1.0 - t * 0.25; addBox(px, py, pz, s, 0.35, s, m); }
+      },
+      function leaps(m, t) { // huge horizontal jumps, gentle rise
+        for (let i = 0; i < 2; i++) { step(0.8, 1.1, 2.0, 2.4); addBox(px, py, pz, 1.0, 0.35, 1.0, m); }
+      },
+      function pebbles(m, t) { // tiny platforms, close together
+        for (let i = 0; i < 4; i++) { step(1.0, 1.2, 0.9, 1.2); addBox(px, py, pz, 0.55, 0.3, 0.55, m); }
+      },
+      function rope(m, t) { // one long tightrope
+        heading += (rnd() - 0.5) * 1.0;
+        const ax = snapAxis(), sg = snapSign(ax), L = 5.5;
+        py += 0.7;
+        addBox(px + (ax ? sg * L / 2 : 0), py, pz + (ax ? 0 : sg * L / 2), ax ? L : 0.42, 0.3, ax ? 0.42 : L, m);
+        px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
+      },
+      function vault(m, t) { // walls to climb over
+        for (let i = 0; i < 2; i++) {
+          step(0.5, 0.7, 1.4, 1.7);
+          const ax = snapAxis();
+          addBox(px, py + 1.1, pz, ax ? 0.5 : 1.8, 2.2, ax ? 1.8 : 0.5, m);
+          py += 2.4; mark();
+        }
+      },
+      function sliders(m, t) { // side-to-side movers
+        for (let i = 0; i < 3; i++) { step(1.1, 1.5, 1.1, 1.8); addMover(px, py, pz, 1.0, 0.35, 1.0, m, 1.1, 0, 0, 0.7 + rnd() * 0.5); }
+      },
+      function lifts(m, t) { // bobbing elevators
+        for (let i = 0; i < 3; i++) { step(0.9, 1.2, 1.1, 1.7); addMover(px, py, pz, 1.0, 0.35, 1.0, m, 0, 0.7, 0, 0.8 + rnd() * 0.4); }
+      },
+      function carousel(m, t) { // circling movers
+        for (let i = 0; i < 3; i++) { step(1.1, 1.5, 1.1, 1.7); addMover(px, py, pz, 1.0, 0.35, 1.0, m, 0.9, 0, 0.9, 0.55 + rnd() * 0.35); }
+      },
+      function monkeyBars(m, t) { // swing hand-over-hand UNDER the bars
+        const baseY = py;
+        for (let i = 0; i < 4; i++) {
+          heading += (rnd() - 0.5) * 0.5;
+          px += Math.cos(heading) * 1.05; pz += Math.sin(heading) * 1.05;
+          addBox(px, baseY + 2.15, pz, 0.7, 0.18, 0.7, m);
+        }
+        heading += (rnd() - 0.5) * 0.5;
+        px += Math.cos(heading) * 1.2; pz += Math.sin(heading) * 1.2;
+        py = baseY + 0.9;
+        addBox(px, py, pz, 1.1, 0.35, 1.1, m); mark();
+      },
+      function chimney(m, t) { // climb UP between two facing walls
+        step(0.8, 1.0, 1.2, 1.5);
+        addBox(px, py, pz, 1.5, 0.4, 1.5, m); // base you stand on
+        const ax = snapAxis(), H = 3.0;
+        if (ax) { addBox(px, py + H / 2 + 0.4, pz - 0.72, 1.5, H, 0.28, m); addBox(px, py + H / 2 + 0.4, pz + 0.72, 1.5, H, 0.28, m); }
+        else    { addBox(px - 0.72, py + H / 2 + 0.4, pz, 0.28, H, 1.5, m); addBox(px + 0.72, py + H / 2 + 0.4, pz, 0.28, H, 1.5, m); }
+        py += H + 0.55; mark(); // top out on the wall rims
+      },
+      function pyramid(m, t) { // climb a stacked monument
+        step(0.8, 1.0, 1.4, 1.7);
+        const w = [3.2, 2.4, 1.6, 0.8];
+        for (let i = 0; i < 4; i++) addBox(px, py + 0.4 + i * 0.8, pz, w[i], 0.8, w[i], m);
+        py += 3.4; mark();
+      },
+      function pegPole(m, t) { // spiral of pegs up a pole
+        step(0.8, 1.0, 1.2, 1.5);
+        addBox(px, py + 2.0, pz, 0.55, 4.2, 0.55, m);
+        for (let i = 0; i < 4; i++) {
+          const a = i * 1.6;
+          addBox(px + Math.cos(a) * 0.48, py + 0.6 + i * 0.95, pz + Math.sin(a) * 0.48, 0.32, 0.26, 0.32, m);
+        }
+        py += 4.3; mark(); // stand on the pole top
+      },
+      function pistons(m, t) { // opposite-phase pumping pairs
+        for (let i = 0; i < 3; i++) {
+          step(0.8, 1.0, 1.1, 1.4);
+          const pxp = -Math.sin(heading), pzp = Math.cos(heading);
+          addMover(px + pxp * 0.62, py, pz + pzp * 0.62, 0.8, 0.4, 0.8, m, 0, 0.9, 0, 1.0, 0);
+          addMover(px - pxp * 0.62, py, pz - pzp * 0.62, 0.8, 0.4, 0.8, m, 0, 0.9, 0, 1.0, Math.PI);
+        }
+      },
+      function snakeWalk(m, t) { // winding narrow catwalk
+        for (let i = 0; i < 6; i++) { stepTurn(i % 2 ? 0.55 : -0.55, 0.25, 0.35, 1.0, 1.2); addBox(px, py, pz, 0.6, 0.3, 1.3, m); }
+      },
+      function halfpipe(m, t) { // travel inside a walled channel
+        heading += (rnd() - 0.5) * 1.0;
+        const ax = snapAxis(), sg = snapSign(ax), L = 4;
+        py += 0.6;
+        const cx2 = px + (ax ? sg * L / 2 : 0), cz2 = pz + (ax ? 0 : sg * L / 2);
+        addBox(cx2, py, cz2, ax ? L : 1.3, 0.3, ax ? 1.3 : L, m);
+        addBox(cx2 + (ax ? 0 : 0.75), py + 0.85, cz2 + (ax ? 0.75 : 0), ax ? L : 0.25, 1.4, ax ? 0.25 : L, m);
+        addBox(cx2 - (ax ? 0 : 0.75), py + 0.85, cz2 - (ax ? 0.75 : 0), ax ? L : 0.25, 1.4, ax ? 0.25 : L, m);
+        px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
+      },
+      function arches(m, t) { // hop the lintels of stone gateways
+        for (let i = 0; i < 3; i++) {
+          step(0.6, 0.8, 1.4, 1.7);
+          const ax = snapAxis();
+          addBox(px, py + 1.3, pz, ax ? 0.5 : 2.2, 0.4, ax ? 2.2 : 0.5, m); // lintel = the platform
+          addBox(px + (ax ? 0 : -0.85), py + 0.55, pz + (ax ? -0.85 : 0), 0.4, 1.1, 0.4, m);
+          addBox(px + (ax ? 0 : 0.85),  py + 0.55, pz + (ax ? 0.85 : 0),  0.4, 1.1, 0.4, m);
+          py += 1.5; mark();
+        }
+      },
+      function windowWall(m, t) { // climb through a hole in a wall
+        step(0.7, 0.9, 1.3, 1.6);
+        const ax = snapAxis(), W = 2.4;
+        addBox(px, py + 0.6, pz, ax ? 0.4 : W, 1.2, ax ? W : 0.4, m);  // sill — climb onto it
+        addBox(px, py + 2.6, pz, ax ? 0.4 : W, 1.0, ax ? W : 0.4, m);  // header — duck through the gap
+        py += 1.4; mark();
+      },
+      function cluster(m, t) { // a 3D blob of boxes — find your route
+        const bx = px, by = py, bz = pz;
+        for (let i = 0; i < 3; i++) { step(0.9, 1.1, 0.9, 1.2); addBox(px, py, pz, 0.7, 0.6, 0.7, m); }
+        for (let i = 0; i < 4; i++) addBox(bx + (rnd() - 0.5) * 4, by + rnd() * (py - by + 1), bz + (rnd() - 0.5) * 4, 0.5 + rnd() * 0.5, 0.5 + rnd() * 0.5, 0.5 + rnd() * 0.5, m);
+      },
+      function rooftops(m, t) { // big roofs with parapets to hop over
+        for (let i = 0; i < 2; i++) {
+          step(0.9, 1.1, 2.0, 2.3);
+          addBox(px, py, pz, 2.6, 0.4, 2.6, m);
+          addBox(px - 1.25, py + 0.45, pz, 0.12, 0.5, 2.6, m);
+          addBox(px + 1.25, py + 0.45, pz, 0.12, 0.5, 2.6, m);
+        }
+      },
+      function towerHop(m, t) { // land on capped mini-towers
+        for (let i = 0; i < 3; i++) {
+          step(0.9, 1.2, 1.2, 1.6);
+          addBox(px, py - 0.7, pz, 1.0, 1.2, 1.0, m);
+          addBox(px, py + 0.15, pz, 0.65, 0.5, 0.65, m);
+        }
+      },
+      function jenga(m, t) { // crooked criss-cross stack to scale
+        step(0.7, 0.9, 1.3, 1.6);
+        for (let i = 0; i < 5; i++) {
+          const ax = i % 2 === 0;
+          addBox(px + (rnd() - 0.5) * 0.5, py + 0.5, pz + (rnd() - 0.5) * 0.5, ax ? 2.2 : 0.7, 0.45, ax ? 0.7 : 2.2, m);
+          py += 0.55;
+        }
+        mark();
+      },
+      function ferry(m, t) { // ride a sliding island across a huge gap
+        step(0.6, 0.8, 1.2, 1.4);
+        addBox(px, py, pz, 1.4, 0.4, 1.4, m); // dock
+        heading += (rnd() - 0.5) * 0.8;
+        const ax = snapAxis(), sg = snapSign(ax), GAP = 5.2;
+        addMover(px + (ax ? sg * GAP / 2 : 0), py + 0.5, pz + (ax ? 0 : sg * GAP / 2), 1.7, 0.4, 1.7, m, ax ? 2.1 : 0, 0, ax ? 0 : 2.1, 0.4);
+        px += ax ? sg * GAP : 0; pz += ax ? 0 : sg * GAP; py += 1.1;
+        addBox(px, py, pz, 1.4, 0.4, 1.4, m); mark(); // far dock
+      },
+      function bobOrbit(m, t) { // movers that circle AND bob
+        for (let i = 0; i < 2; i++) { step(0.9, 1.2, 1.3, 1.6); addMover(px, py, pz, 1.0, 0.35, 1.0, m, 0.8, 0.5, 0.8, 0.6); }
+      },
+      function narrows(m, t) { // beams that keep getting thinner
+        const w = [0.5, 0.38, 0.26];
+        for (let i = 0; i < 3; i++) {
+          step(0.6, 0.8, 1.2, 1.5);
+          const ax = i % 2 === 0;
+          addBox(px, py, pz, ax ? 2.6 : w[i], 0.25, ax ? w[i] : 2.6, m);
+        }
+      },
+      function overhang(m, t) { // swing out around a lip above you
+        step(1.0, 1.3, 1.2, 1.6);
+        addBox(px, py, pz, 1.3, 0.35, 1.3, m);
+        px += Math.cos(heading) * 0.5; pz += Math.sin(heading) * 0.5;
+        addBox(px, py + 2.0, pz, 1.9, 0.35, 1.9, m); // the lip — get on top of it
+        py += 2.2; mark();
+      },
+      function checkers(m, t) { // flat scatter field — pick a route across
+        py += 1.0;
+        for (let i = 0; i < 5; i++) { heading += (rnd() - 0.5) * 1.8; px += Math.cos(heading) * 1.3; pz += Math.sin(heading) * 1.3; addBox(px, py, pz, 0.8, 0.3, 0.8, m); }
+        mark();
+      },
+      function panes(m, t) { // vault thin tall glass panes
+        for (let i = 0; i < 3; i++) {
+          step(0.5, 0.7, 1.2, 1.5);
+          const ax = snapAxis();
+          addBox(px, py + 0.8, pz, ax ? 0.12 : 1.8, 1.6, ax ? 1.8 : 0.12, m);
+          py += 1.8; mark();
+        }
+      },
+      function weave(m, t) { // twin rails with blockers — switch sides
+        heading += (rnd() - 0.5) * 0.8;
+        const ax = snapAxis(), sg = snapSign(ax), L = 6;
+        py += 0.7;
+        const cx2 = px + (ax ? sg * L / 2 : 0), cz2 = pz + (ax ? 0 : sg * L / 2);
+        addBox(cx2 + (ax ? 0 : 0.55), py, cz2 + (ax ? 0.55 : 0), ax ? L : 0.4, 0.3, ax ? 0.4 : L, m);
+        addBox(cx2 - (ax ? 0 : 0.55), py, cz2 - (ax ? 0.55 : 0), ax ? L : 0.4, 0.3, ax ? 0.4 : L, m);
+        addBox(cx2 + (ax ? -sg : 0.55) * (ax ? L / 6 : 1) + (ax ? 0 : 0), py + 0.55, cz2 + (ax ? 0.55 : -sg * L / 6), 0.5, 0.8, 0.5, m); // blocker rail A
+        addBox(cx2 + (ax ? sg * L / 6 : -0.55), py + 0.55, cz2 + (ax ? -0.55 : sg * L / 6), 0.5, 0.8, 0.5, m);                            // blocker rail B
+        px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
+      }
+    ];
+
+    // ---- 6 one-off signature levels ----
+    function sigGreatWall(t) { // one 7m mega-wall, studded both faces
+      step(0.9, 1.0, 1.3, 1.5);
+      addBox(px, py, pz, 2.6, 0.5, 2.6, matStorm);
+      const ax = snapAxis();
+      addBox(px, py + 3.9, pz, ax ? 0.6 : 4.2, 7.0, ax ? 4.2 : 0.6, matStorm);
+      for (let i = 0; i < 5; i++) {
+        const lat = i % 2 ? 0.95 : -0.95;
+        for (const side of [-0.5, 0.5]) {
+          addBox(px + (ax ? side : lat), py + 1.1 + i * 1.25, pz + (ax ? lat : side), 0.35, 0.28, 0.35, matHoney);
+        }
+      }
+      py += 7.7; mark();
+    }
+    function sigElevatorShaft(t) { // three giant slow lifts
+      step(0.9, 1.0, 1.3, 1.5);
+      addBox(px, py, pz, 2.2, 0.5, 2.2, matCopper);
+      for (let i = 0; i < 3; i++) {
+        step(0.2, 0.4, 1.4, 1.7);
+        addMover(px, py + 1.8, pz, 1.6, 0.4, 1.6, matCopper, 0, 2.2, 0, 0.45, i * 2.1);
+        py += 4.2; mark();
+        step(0.2, 0.4, 1.3, 1.6);
+        addBox(px, py, pz, 1.4, 0.4, 1.4, matSlate);
+      }
+    }
+    function sigMaze(t) { // a walled maze floor with a corner exit tower
+      step(0.9, 1.0, 1.3, 1.5);
+      addBox(px, py, pz, 6, 0.5, 6, matSand);
+      const fy = py + 0.25;
+      addBox(px - 1.0, fy + 0.9, pz - 1.5, 4.0, 1.8, 0.3, matSand);
+      addBox(px + 1.0, fy + 0.9, pz,       4.0, 1.8, 0.3, matSand);
+      addBox(px - 1.0, fy + 0.9, pz + 1.5, 4.0, 1.8, 0.3, matSand);
+      addBox(px + 2.4, fy + 0.7, pz + 2.4, 0.9, 1.4, 0.9, matHoney);
+      px += 2.4; pz += 2.4; py = fy + 1.4; mark();
+    }
+    function sigAsteroidField(t) { // a cloud of rocks — many routes, one goal
+      const bx = px, by = py, bz = pz;
+      for (let i = 0; i < 6; i++) { step(0.9, 1.2, 1.0, 1.5); addBox(px, py, pz, 0.7 + rnd() * 0.4, 0.6, 0.7 + rnd() * 0.4, matRock2); }
+      for (let i = 0; i < 10; i++) addBox(bx + (rnd() - 0.5) * 7, by + rnd() * (py - by), bz + (rnd() - 0.5) * 7, 0.6 + rnd() * 0.6, 0.6, 0.6 + rnd() * 0.6, matRock);
+    }
+    function sigVoidRope(t) { // one 12-meter tightrope over nothing
+      heading += (rnd() - 0.5) * 1.0;
+      const ax = snapAxis(), sg = snapSign(ax), L = 12;
+      py += 0.8;
+      addBox(px + (ax ? sg * L / 2 : 0), py, pz + (ax ? 0 : sg * L / 2), ax ? L : 0.4, 0.3, ax ? 0.4 : L, matObsidian);
+      px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
+    }
+    function sigFinalAscent(t) { // the only triple-combo in the game
+      SEG[9](matStar, 1);      // pebbles
+      SEG[15](matObsidian, 1); // monkey bars
+      SEG[12](matGold, 1);     // sliders
+    }
+    const SIGNATURES = { 25: sigGreatWall, 50: sigElevatorShaft, 75: sigMaze, 100: sigAsteroidField, 125: sigVoidRope, 135: sigFinalAscent };
+
+    // every non-signature level is a UNIQUE unordered pair of two different mechanics
+    const pairs = [];
+    for (let i = 0; i < SEG.length; i++) for (let j = i + 1; j < SEG.length; j++) pairs.push([i, j]);
+    for (let i = pairs.length - 1; i > 0; i--) { // deterministic shuffle
+      const k = Math.floor(rnd() * (i + 1));
+      const tmp = pairs[i]; pairs[i] = pairs[k]; pairs[k] = tmp;
+    }
+
+    const palette = [matRock, matRock2, matMoss, matWood, matSand, matIce, matMush, matLava,
+                     matCloud, matCrystal, matStorm, matBeam2, matStar, matPink, matPurple,
+                     matCopper, matEmerald, matObsidian, matSnow, matHoney, matCoral, matMint,
+                     matSlate].concat(rainbowMats);
+
+    let p = 0;
+    for (let z = 0; z < 136; z++) {
+      const t = Math.min(z / 40, 1); // difficulty ramps over the first 40 space levels
+      if (SIGNATURES[z]) {
+        SIGNATURES[z](t);
+      } else {
+        const pr = pairs[p++];
+        SEG[pr[0]](palette[(z * 7 + pr[0]) % palette.length], t);
+        SEG[pr[1]](palette[(z * 13 + pr[1] + 5) % palette.length], t);
+      }
+      // rest platform between levels
       step(1.1, 1.3, 1.0, 1.5);
       addBox(px, py, pz, 2.0, 0.45, 2.0, matMoss);
     }
@@ -485,7 +797,7 @@
 
   // ---------- floating decor: drifting rocks + far islands (no collision, no NPCs) ----------
   const floaters = [];
-  for (let i = 0; i < 110; i++) {
+  for (let i = 0; i < 160; i++) {
     const p = pathPts[Math.floor(rnd() * pathPts.length)];
     const a = rnd() * Math.PI * 2;
     const r = 6 + rnd() * 10;
@@ -497,7 +809,7 @@
     floaters.push({ m: rock, base: rock.position.y, ph: rnd() * 6.28, sp: 0.3 + rnd() * 0.5 });
   }
   // big far-off islands with a tree on top
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < 22; i++) {
     const p = pathPts[Math.floor(rnd() * pathPts.length)];
     const a = rnd() * Math.PI * 2;
     const r = 14 + rnd() * 8;
@@ -528,6 +840,9 @@
     crown.position.set(tx, th + 1.6, tz);
     scene.add(trunk, crown);
   }
+
+  // bake all static platforms into one merged mesh per material (huge perf win)
+  buildStaticMeshes();
 
   // ---------- SPACE VISUALS ----------
   // The space look belongs to the space MAP now, not to altitude:
