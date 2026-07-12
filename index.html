@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ONLY UP — Gorilla Climb</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
+  canvas { display: block; }
+  #overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    background: radial-gradient(ellipse at 50% 30%, #14382a 0%, #071710 70%);
+    color: #eaf5ec; font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+    text-align: center; z-index: 10; padding: 24px;
+  }
+  #overlay h1 { font-size: clamp(40px, 9vw, 88px); margin: 0; letter-spacing: 4px;
+    color: #ffd23f; text-shadow: 0 4px 0 #7a5c00, 0 8px 24px rgba(0,0,0,.6); }
+  #overlay p { max-width: 520px; line-height: 1.5; margin: 0; font-size: 16px; color: #bfe3c8; }
+  #vrbtn, #flatbtn, #mobilebtn {
+    font-family: inherit; font-size: 20px; font-weight: bold; letter-spacing: 1px;
+    padding: 14px 42px; border-radius: 999px; border: 3px solid #ffd23f;
+    background: #1e5c3a; color: #ffd23f; cursor: pointer;
+  }
+  #vrbtn:disabled { opacity: .4; border-color: #557; color: #99a; background: #223; cursor: not-allowed; }
+  #flatbtn, #mobilebtn { border-color: #6fae7f; color: #d8f0dd; background: transparent; font-size: 15px; padding: 10px 28px; }
+  #mobilebtn { display: none; border-color: #ffd23f; color: #ffd23f; }
+  #hint { position: fixed; left: 12px; bottom: 12px; color: #cfe9d4; z-index: 5;
+    font-family: 'Trebuchet MS', sans-serif; font-size: 13px; background: rgba(7,23,16,.65);
+    padding: 8px 12px; border-radius: 8px; display: none; }
+  #touchui { display: none; }
+  #stick { position: fixed; left: 22px; bottom: 26px; width: 120px; height: 120px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.5); background: rgba(255,255,255,.08); z-index: 6; touch-action: none; }
+  #knob { position: absolute; left: 40px; top: 40px; width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(255,255,255,.55); pointer-events: none; }
+  #jumpbtn { position: fixed; right: 22px; bottom: 40px; width: 92px; height: 92px; border-radius: 50%;
+    border: 3px solid #ffd23f; background: rgba(30,92,58,.8); color: #ffd23f;
+    font-family: 'Trebuchet MS', sans-serif; font-weight: bold; font-size: 18px; z-index: 6; touch-action: none; }
+</style>
+</head>
+<body>
+<div id="overlay">
+  <h1>ONLY UP</h1>
+  <p><b>Gorilla-style climbing.</b> No buttons, no sticks. Push off surfaces with your hands to move, just like Gorilla Tag. Swing hard to launch. Reach the summit. Fall and you start over at the bottom.</p>
+  <button id="vrbtn" disabled>CHECKING VR…</button>
+  <button id="mobilebtn">Play on phone — move phone to look</button>
+  <button id="flatbtn">Preview on flat screen</button>
+  <p style="font-size:13px;color:#7fae8c">On Quest 3S: open this page in the headset's browser, then press ENTER VR.</p>
+</div>
+<div id="hint">WASD move · mouse look · SPACE jump · fall = restart</div>
+<div id="touchui">
+  <div id="stick"><div id="knob"></div></div>
+  <button id="jumpbtn">JUMP</button>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- renderer / scene ----------
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.xr.enabled = true;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87c5e8);
+  scene.fog = new THREE.Fog(0x87c5e8, 30, 140);
+
+  const sun = new THREE.DirectionalLight(0xfff3d6, 1.0);
+  sun.position.set(20, 60, 10);
+  scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xbfe8ff, 0x2c5232, 0.85));
+
+  const camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.05, 400);
+
+  // player rig: everything (camera + hands) rides inside this
+  const rig = new THREE.Group();
+  rig.add(camera);
+  scene.add(rig);
+
+  const SPAWN = new THREE.Vector3(0, 0.02, 6);
+  rig.position.copy(SPAWN);
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- world building ----------
+  const colliders = []; // { min:Vector3, max:Vector3, top:number }
+  const matRock  = new THREE.MeshLambertMaterial({ color: 0x8a7f70 });
+  const matRock2 = new THREE.MeshLambertMaterial({ color: 0x77685a });
+  const matMoss  = new THREE.MeshLambertMaterial({ color: 0x4d8f4a });
+  const matWood  = new THREE.MeshLambertMaterial({ color: 0x8a5a33 });
+  const matGold  = new THREE.MeshLambertMaterial({ color: 0xffd23f, emissive: 0x6b5200 });
+
+  function addBox(x, y, z, w, h, d, mat) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    mesh.position.set(x, y, z);
+    scene.add(mesh);
+    colliders.push({
+      min: new THREE.Vector3(x - w / 2, y - h / 2, z - d / 2),
+      max: new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2)
+    });
+    return mesh;
+  }
+
+  // jungle floor
+  addBox(0, -0.5, 0, 90, 1, 90, matMoss);
+  // scattered ground rocks for warming up
+  addBox(3, 0.3, 3, 1.6, 0.6, 1.6, matRock);
+  addBox(-3.4, 0.45, 2.2, 1.4, 0.9, 1.4, matRock2);
+
+  // central stone pillar the route spirals around
+  const pillar = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.4, 3.2, 60, 10),
+    matRock2
+  );
+  pillar.position.set(0, 30, 0);
+  scene.add(pillar);
+  // pillar collision approximated as a square core
+  colliders.push({
+    min: new THREE.Vector3(-2.1, 0, -2.1),
+    max: new THREE.Vector3(2.1, 60, 2.1)
+  });
+
+  // the spiral of ledges — gets harder as you rise
+  const ledges = [];
+  {
+    let angle = 0;
+    let y = 1.0;
+    const R = 3.6;
+    const COUNT = 26;
+    for (let i = 0; i < COUNT; i++) {
+      const t = i / (COUNT - 1);              // 0 bottom → 1 top
+      const gap = 1.0 + t * 1.35;             // vertical gap grows: 1.0m → ~2.35m
+      const size = 1.5 - t * 0.75;            // ledges shrink: 1.5m → 0.75m
+      const x = Math.cos(angle) * R;
+      const z = Math.sin(angle) * R;
+      const mat = (i % 3 === 0) ? matWood : (i % 3 === 1 ? matRock : matRock2);
+      addBox(x, y, z, size, 0.35, size, mat);
+      ledges.push({ x, y, z });
+      angle += 0.85 + t * 0.25;               // spiral tightens slightly
+      y += gap;
+    }
+    // a few wall studs on the pillar between the widest gaps (hard, but a saver)
+    for (let i = 18; i < 25; i += 2) {
+      const a = Math.atan2(ledges[i].z, ledges[i].x) + 0.45;
+      addBox(Math.cos(a) * 2.35, (ledges[i].y + ledges[i + 1 < 26 ? i + 1 : i].y) / 2,
+             Math.sin(a) * 2.35, 0.45, 0.3, 0.45, matRock);
+    }
+    // summit
+    var TOP_Y = y + 0.4;
+    addBox(0, TOP_Y, 0, 3.2, 0.5, 3.2, matGold);
+  }
+
+  // summit sign
+  {
+    const cvs = document.createElement('canvas');
+    cvs.width = 512; cvs.height = 192;
+    const g = cvs.getContext('2d');
+    g.fillStyle = '#123c26'; g.fillRect(0, 0, 512, 192);
+    g.strokeStyle = '#ffd23f'; g.lineWidth = 10; g.strokeRect(8, 8, 496, 176);
+    g.fillStyle = '#ffd23f'; g.font = 'bold 72px Trebuchet MS'; g.textAlign = 'center';
+    g.fillText('YOU MADE IT', 256, 118);
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.4, 0.9),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cvs), side: THREE.DoubleSide })
+    );
+    sign.position.set(0, TOP_Y + 1.8, 0);
+    scene.add(sign);
+    // slowly spin so it's readable from anywhere
+    sign.onBeforeRender = () => { sign.rotation.y += 0.004; };
+  }
+
+  // distant jungle trees (decor only, no collision, no NPCs)
+  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4526 });
+  const leafMat = new THREE.MeshLambertMaterial({ color: 0x2f7a3a });
+  for (let i = 0; i < 26; i++) {
+    const a = (i / 26) * Math.PI * 2;
+    const r = 22 + (i * 7919 % 14);
+    const tx = Math.cos(a) * r, tz = Math.sin(a) * r;
+    const th = 5 + (i * 104729 % 6);
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, th, 6), trunkMat);
+    trunk.position.set(tx, th / 2, tz);
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(2.6, 4.5, 7), leafMat);
+    crown.position.set(tx, th + 1.6, tz);
+    scene.add(trunk, crown);
+  }
+
+  // ---------- hands (VR) ----------
+  const HAND_R = 0.09;
+  const handGeo = new THREE.SphereGeometry(HAND_R, 12, 10);
+  const handMat = new THREE.MeshLambertMaterial({ color: 0x3b2a1e });
+  const controllers = [];
+  for (let i = 0; i < 2; i++) {
+    const c = renderer.xr.getController(i);
+    const ball = new THREE.Mesh(handGeo, handMat);
+    c.add(ball);
+    rig.add(c);
+    controllers.push({ ctrl: c, prev: null });
+  }
+
+  // ---------- physics helpers ----------
+  const velocity = new THREE.Vector3();
+  const MAX_SPEED = 8.5;
+  const GRAV = 9.8;
+
+  function closestPointOnBox(p, box, out) {
+    out.set(
+      Math.max(box.min.x, Math.min(p.x, box.max.x)),
+      Math.max(box.min.y, Math.min(p.y, box.max.y)),
+      Math.max(box.min.z, Math.min(p.z, box.max.z))
+    );
+    return out;
+  }
+
+  const _cp = new THREE.Vector3();
+  const _n = new THREE.Vector3();
+  function sphereHit(worldPos, r) {
+    for (let i = 0; i < colliders.length; i++) {
+      closestPointOnBox(worldPos, colliders[i], _cp);
+      _n.subVectors(worldPos, _cp);
+      const d = _n.length();
+      if (d < r) {
+        if (d < 1e-5) { _n.set(0, 1, 0); } else { _n.divideScalar(d); }
+        return { normal: _n.clone(), depth: r - d };
+      }
+    }
+    return null;
+  }
+
+  function respawnIfFallen() {
+    if (rig.position.y < -4) {
+      rig.position.copy(SPAWN);
+      velocity.set(0, 0, 0);
+      controllers.forEach(c => c.prev = null);
+    }
+  }
+
+  // ---------- VR update: gorilla locomotion ----------
+  const _local = new THREE.Vector3();
+  const _world = new THREE.Vector3();
+  const _delta = new THREE.Vector3();
+  const _push = new THREE.Vector3();
+
+  function updateVR(dt) {
+    let touching = 0;
+    _delta.set(0, 0, 0);
+    _push.set(0, 0, 0);
+
+    for (const h of controllers) {
+      _local.copy(h.ctrl.position);
+      _world.copy(_local).add(rig.position);
+      const hit = sphereHit(_world, HAND_R);
+      if (hit && h.prev) {
+        touching++;
+        // pin the hand: move the body opposite to hand movement
+        _delta.add(_local.clone().sub(h.prev));
+        _push.add(hit.normal.multiplyScalar(hit.depth));
+      }
+      h.prev = h.prev || new THREE.Vector3();
+      h.prev.copy(_local);
+    }
+
+    if (touching > 0) {
+      _delta.divideScalar(touching);
+      rig.position.sub(_delta);       // stick to the wall
+      rig.position.add(_push);        // resolve penetration
+      velocity.copy(_delta).multiplyScalar(-1 / Math.max(dt, 1 / 120));
+      if (velocity.length() > MAX_SPEED) velocity.setLength(MAX_SPEED);
+    } else {
+      velocity.y -= GRAV * dt;
+      if (velocity.length() > MAX_SPEED * 1.4) velocity.setLength(MAX_SPEED * 1.4);
+      rig.position.addScaledVector(velocity, dt);
+      landOnTops();
+    }
+    respawnIfFallen();
+  }
+
+  // let the player stand: feet point under the headset settles on box tops
+  const _feet = new THREE.Vector3();
+  function landOnTops() {
+    if (velocity.y > 0) return;
+    camera.getWorldPosition(_feet);
+    _feet.y = rig.position.y;
+    for (const b of colliders) {
+      if (_feet.x > b.min.x && _feet.x < b.max.x && _feet.z > b.min.z && _feet.z < b.max.z) {
+        const top = b.max.y;
+        if (_feet.y >= top - 0.25 && _feet.y <= top + 0.05) {
+          rig.position.y = top;
+          velocity.set(velocity.x * 0.4, 0, velocity.z * 0.4);
+          return;
+        }
+      }
+    }
+  }
+
+  // ---------- flat-screen + phone mode ----------
+  let flat = false;
+  let mobile = false;
+  let yaw = 0, pitch = 0;
+  const keys = {};
+  const EYE = 1.55;
+  const UP = new THREE.Vector3(0, 1, 0);
+
+  function startFlat() {
+    flat = true;
+    document.getElementById('overlay').style.display = 'none';
+    document.getElementById('hint').style.display = 'block';
+    camera.position.set(0, EYE, 0);
+    renderer.domElement.addEventListener('click', () => renderer.domElement.requestPointerLock());
+    document.addEventListener('mousemove', e => {
+      if (document.pointerLockElement !== renderer.domElement) return;
+      yaw -= e.movementX * 0.0024;
+      pitch = Math.max(-1.45, Math.min(1.45, pitch - e.movementY * 0.0024));
+    });
+    document.addEventListener('keydown', e => keys[e.code] = true);
+    document.addEventListener('keyup', e => keys[e.code] = false);
+  }
+
+  // --- phone: gyroscope look ---
+  let orientData = null;
+  let hasGyro = false;
+  const _zee = new THREE.Vector3(0, 0, 1);
+  const _euler = new THREE.Euler();
+  const _q0 = new THREE.Quaternion();
+  const _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+  function gyroQuaternion(quat, alpha, beta, gamma, orient) {
+    _euler.set(beta, alpha, -gamma, 'YXZ');
+    quat.setFromEuler(_euler);
+    quat.multiply(_q1);
+    quat.multiply(_q0.setFromAxisAngle(_zee, -orient));
+  }
+  function updateDeviceLook() {
+    if (orientData && orientData.alpha !== null) {
+      hasGyro = true;
+      const a = THREE.MathUtils.degToRad(orientData.alpha);
+      const b = THREE.MathUtils.degToRad(orientData.beta);
+      const g = THREE.MathUtils.degToRad(orientData.gamma);
+      const o = THREE.MathUtils.degToRad(
+        (screen.orientation && screen.orientation.angle) || window.orientation || 0);
+      gyroQuaternion(camera.quaternion, a, b, g, o);
+    } else {
+      // no gyro permission: fall back to swipe-to-look
+      camera.rotation.set(pitch, yaw, 0, 'YXZ');
+    }
+  }
+
+  function startMobile() {
+    const go = () => {
+      mobile = true; flat = true;
+      document.getElementById('overlay').style.display = 'none';
+      document.getElementById('touchui').style.display = 'block';
+      camera.position.set(0, EYE, 0);
+      window.addEventListener('deviceorientation', e => { orientData = e; });
+    };
+    // iOS requires an explicit permission prompt for motion sensors
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(go).catch(go);
+    } else { go(); }
+  }
+
+  // --- phone: joystick + jump + swipe-look fallback ---
+  const joy = { x: 0, y: 0 };
+  let jumpHeld = false;
+  {
+    const stick = document.getElementById('stick');
+    const knob = document.getElementById('knob');
+    let joyId = null, ox = 0, oy = 0;
+    stick.addEventListener('touchstart', e => {
+      const t = e.changedTouches[0];
+      joyId = t.identifier; ox = t.clientX; oy = t.clientY;
+      e.preventDefault();
+    }, { passive: false });
+    stick.addEventListener('touchmove', e => {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== joyId) continue;
+        let dx = (t.clientX - ox) / 45, dy = (t.clientY - oy) / 45;
+        const len = Math.hypot(dx, dy);
+        if (len > 1) { dx /= len; dy /= len; }
+        joy.x = dx; joy.y = -dy;
+        knob.style.transform = 'translate(' + (dx * 35) + 'px,' + (dy * 35) + 'px)';
+      }
+      e.preventDefault();
+    }, { passive: false });
+    const endJoy = e => {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== joyId) continue;
+        joyId = null; joy.x = 0; joy.y = 0; knob.style.transform = '';
+      }
+    };
+    stick.addEventListener('touchend', endJoy);
+    stick.addEventListener('touchcancel', endJoy);
+
+    const jb = document.getElementById('jumpbtn');
+    jb.addEventListener('touchstart', e => { jumpHeld = true; e.preventDefault(); }, { passive: false });
+    jb.addEventListener('touchend', () => { jumpHeld = false; });
+    jb.addEventListener('touchcancel', () => { jumpHeld = false; });
+
+    // swipe-to-look on the rest of the screen (used when gyro is unavailable)
+    let lookId = null, lx = 0, ly = 0;
+    renderer.domElement.addEventListener('touchstart', e => {
+      if (!mobile || hasGyro) return;
+      const t = e.changedTouches[0];
+      lookId = t.identifier; lx = t.clientX; ly = t.clientY;
+    });
+    renderer.domElement.addEventListener('touchmove', e => {
+      if (!mobile || hasGyro) return;
+      for (const t of e.changedTouches) {
+        if (t.identifier !== lookId) continue;
+        yaw -= (t.clientX - lx) * 0.005;
+        pitch = Math.max(-1.45, Math.min(1.45, pitch - (t.clientY - ly) * 0.005));
+        lx = t.clientX; ly = t.clientY;
+      }
+    });
+  }
+
+  let grounded = false;
+  const _fwd = new THREE.Vector3();
+  const _rgt = new THREE.Vector3();
+  function updateFlat(dt) {
+    const move = new THREE.Vector3();
+    let wantJump = false;
+    if (mobile) {
+      updateDeviceLook();
+      _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+      _fwd.y = 0;
+      if (_fwd.lengthSq() < 1e-4) _fwd.set(0, 0, -1);
+      _fwd.normalize();
+      _rgt.crossVectors(_fwd, UP);
+      move.addScaledVector(_fwd, joy.y).addScaledVector(_rgt, joy.x);
+      if (move.lengthSq() > 1) move.normalize();
+      move.multiplyScalar(4.2);
+      wantJump = jumpHeld;
+    } else {
+      camera.rotation.set(pitch, yaw, 0, 'YXZ');
+      const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const r = new THREE.Vector3(f.z, 0, -f.x);
+      if (keys['KeyW']) move.add(f);
+      if (keys['KeyS']) move.sub(f);
+      if (keys['KeyD']) move.sub(r);
+      if (keys['KeyA']) move.add(r);
+      if (move.lengthSq() > 0) move.normalize().multiplyScalar(4.2);
+      wantJump = keys['Space'];
+    }
+    velocity.x = move.x; velocity.z = move.z;
+    if (wantJump && grounded) { velocity.y = 5.4; grounded = false; }
+    velocity.y -= GRAV * dt;
+    rig.position.addScaledVector(velocity, dt);
+
+    // land on tops
+    grounded = false;
+    const p = rig.position;
+    for (const b of colliders) {
+      if (p.x > b.min.x - 0.2 && p.x < b.max.x + 0.2 && p.z > b.min.z - 0.2 && p.z < b.max.z + 0.2) {
+        if (velocity.y <= 0 && p.y >= b.max.y - 0.35 && p.y <= b.max.y + 0.05) {
+          p.y = b.max.y; velocity.y = 0; grounded = true;
+        }
+      }
+    }
+    // simple horizontal block against the pillar core
+    const core = colliders[3];
+    if (p.y < core.max.y &&
+        p.x > core.min.x - 0.3 && p.x < core.max.x + 0.3 &&
+        p.z > core.min.z - 0.3 && p.z < core.max.z + 0.3 && !grounded) {
+      const dx = Math.min(p.x - (core.min.x - 0.3), (core.max.x + 0.3) - p.x);
+      const dz = Math.min(p.z - (core.min.z - 0.3), (core.max.z + 0.3) - p.z);
+      if (dx < dz) p.x = (p.x < 0) ? core.min.x - 0.3 : core.max.x + 0.3;
+      else p.z = (p.z < 0) ? core.min.z - 0.3 : core.max.z + 0.3;
+    }
+    respawnIfFallen();
+  }
+
+  // ---------- main loop ----------
+  const clock = new THREE.Clock();
+  renderer.setAnimationLoop(() => {
+    const dt = Math.min(clock.getDelta(), 0.05);
+    if (renderer.xr.isPresenting) updateVR(dt);
+    else if (flat) updateFlat(dt);
+    renderer.render(scene, camera);
+  });
+
+  // ---------- VR entry ----------
+  const vrbtn = document.getElementById('vrbtn');
+  if (navigator.xr) {
+    navigator.xr.isSessionSupported('immersive-vr').then(ok => {
+      if (ok) {
+        vrbtn.disabled = false;
+        vrbtn.textContent = 'ENTER VR';
+      } else {
+        vrbtn.textContent = 'VR NOT AVAILABLE HERE';
+      }
+    }).catch(() => vrbtn.textContent = 'VR NOT AVAILABLE HERE');
+  } else {
+    vrbtn.textContent = 'VR NOT AVAILABLE HERE';
+  }
+  vrbtn.addEventListener('click', () => {
+    navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
+      .then(session => {
+        renderer.xr.setReferenceSpaceType('local-floor');
+        renderer.xr.setSession(session);
+        document.getElementById('overlay').style.display = 'none';
+        session.addEventListener('end', () => {
+          document.getElementById('overlay').style.display = 'flex';
+          controllers.forEach(c => c.prev = null);
+        });
+      })
+      .catch(err => { vrbtn.textContent = 'VR BLOCKED — OPEN IN NEW TAB'; console.error(err); });
+  });
+  document.getElementById('flatbtn').addEventListener('click', startFlat);
+
+  const mobilebtn = document.getElementById('mobilebtn');
+  if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+    mobilebtn.style.display = 'inline-block';
+  }
+  mobilebtn.addEventListener('click', startMobile);
+})();
+</script>
+</body>
+</html>
