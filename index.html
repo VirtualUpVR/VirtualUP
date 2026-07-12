@@ -392,7 +392,7 @@
     rig.add(c);
     const ball = new THREE.Mesh(handGeo, handMat);
     rig.add(ball);
-    controllers.push({ ctrl: c, ball: ball, prev: null });
+    controllers.push({ ctrl: c, ball: ball, prev: null, wasTouching: false, offTime: 1, cool: 0 });
   }
 
   // ---------- physics helpers ----------
@@ -476,15 +476,22 @@
       const hit = sphereHit(_world, HAND_R);
       if (hit && h.prev) {
         touching++;
-        // fresh contact? play a slap, louder the faster the hand was moving
-        if (!h.wasTouching) {
-          const speed = _local.distanceTo(h.prev) / Math.max(dt, 1 / 120);
+        const speed = _local.distanceTo(h.prev) / Math.max(dt, 1 / 120);
+        // play a slap only on a REAL fresh contact:
+        // hand must have been off the surface for a moment (kills contact jitter),
+        // cooldown must be over (caps the rate), and the hand must actually be moving
+        if (!h.wasTouching && h.offTime > 0.1 && h.cool <= 0 && speed > 0.35) {
           playHit(Math.min(speed, 4));
+          h.cool = 0.15;
         }
+        h.offTime = 0;
         // pin the hand: move the body opposite to hand movement
         _delta.add(_local.clone().sub(h.prev));
         _push.add(hit.normal.multiplyScalar(hit.depth));
+      } else {
+        h.offTime += dt;
       }
+      if (h.cool > 0) h.cool -= dt;
       h.wasTouching = !!hit;
       h.prev = h.prev || new THREE.Vector3();
       h.prev.copy(_local);
