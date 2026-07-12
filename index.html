@@ -765,11 +765,13 @@
 
   function respawnIfFallen() {
     if (inSpace) {
-      // no ground out here — fall off the space map and you wake up back at the arrival pad
+      // no mercy: fall off the space map and you're back at the very bottom of the jungle
       if (rig.position.y < 5) {
-        rig.position.copy(SPACE_SPAWN);
+        rig.position.copy(SPAWN);
         velocity.set(0, 0, 0);
         controllers.forEach(c => c.prev = null);
+        inSpace = false;
+        teleported = false; // the ship will take you again... once you've earned it
       }
     } else if (rig.position.y < -4) {
       rig.position.copy(SPAWN);
