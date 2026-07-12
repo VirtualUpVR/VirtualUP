@@ -1076,7 +1076,23 @@
   const HAND_R = 0.09;
   const ARM_SCALE = 1.5; // gorilla arms: hand reach is amplified from the head, like Gorilla Tag
   const handGeo = new THREE.SphereGeometry(HAND_R, 12, 10);
-  const handMat = new THREE.MeshLambertMaterial({ color: 0x3b2a1e });
+  // purple pixel-art hand texture
+  const handMat = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 16;
+    const g = c.getContext('2d');
+    const shades = ['#4a2178', '#5b2d8f', '#6e3aad', '#7f4ac4', '#8d5be6', '#9b6ff0'];
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      g.fillStyle = shades[Math.random() * shades.length | 0];
+      g.fillRect(x, y, 1, 1);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    return new THREE.MeshLambertMaterial({ color: 0xffffff, map: t });
+  })();
   // a plain cube, shown in each hand only while paused
   function makePauseCube() {
     return new THREE.Mesh(
