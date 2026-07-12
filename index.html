@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP — Gorilla Climb</title>
+<title>VirtualUP</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -1208,33 +1208,30 @@
     }
   }
 
-  // ---------- loading screen (black, 5 seconds, shown in VR) ----------
-  // "VirtualUP" over black, with Loading. / Loading.. / Loading... cycling.
-  const loadCvs = document.createElement('canvas');
-  loadCvs.width = 512; loadCvs.height = 256;
-  const loadCtx = loadCvs.getContext('2d');
-  const loadTex = new THREE.CanvasTexture(loadCvs);
-  const loadPanel = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.0, 0.5),
-    new THREE.MeshBasicMaterial({ map: loadTex, transparent: true, depthTest: false })
-  );
-  loadPanel.renderOrder = 1005;
-  loadPanel.position.set(0, 0, -1.5);
-  let loading = false, loadT = 0, loadDots = -1;
-  function drawLoading(dots) {
-    const g = loadCtx;
-    g.clearRect(0, 0, 512, 256);
-    g.textAlign = 'center';
-    g.fillStyle = '#ffffff'; g.font = 'bold 84px Trebuchet MS';
-    g.fillText('VirtualUP', 256, 110);
-    g.textAlign = 'left'; g.font = 'bold 40px Trebuchet MS';
-    g.fillText('Loading' + '...'.slice(0, dots), 178, 196);
-    loadTex.needsUpdate = true;
+  // ---------- VirtualUP splash (shows when VR starts) ----------
+  const splashCvs = document.createElement('canvas');
+  splashCvs.width = 1024; splashCvs.height = 256;
+  {
+    const g = splashCvs.getContext('2d');
+    g.clearRect(0, 0, 1024, 256);
+    g.font = 'bold 150px Trebuchet MS';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineWidth = 16; g.strokeStyle = '#123c26';
+    g.strokeText('VirtualUP', 512, 128);
+    g.fillStyle = '#ffd23f';
+    g.fillText('VirtualUP', 512, 128);
   }
-  function startLoading() {
-    loading = true; loadT = 5; loadDots = -1;
-    fadeMat.opacity = 1;   // black screen
-    camera.add(loadPanel);
+  const splashMat = new THREE.MeshBasicMaterial({
+    map: new THREE.CanvasTexture(splashCvs), transparent: true, depthTest: false
+  });
+  const splash = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 0.5), splashMat);
+  splash.renderOrder = 999;
+  let splashT = 0;
+  function showSplash() {
+    splash.position.set(0, 0, -1.8);
+    splashMat.opacity = 1;
+    camera.add(splash);
+    splashT = 4.5;
   }
 
   // ---------- hit sounds (synthesized, no files) ----------
@@ -1600,7 +1597,7 @@
   let gameT = 0; // game time stands still while paused, so movers resume exactly where they froze
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
-    if (renderer.xr.isPresenting && !loading) pollPauseButtons();
+    if (renderer.xr.isPresenting) pollPauseButtons();
     if (!paused) {
       gameT += dt;
       updateMovers(gameT);
@@ -1609,7 +1606,7 @@
       const sfTarget = inSpace ? 1 : 0;
       spaceF += (sfTarget - spaceF) * Math.min(dt * 2.5, 1);
       if (Math.abs(spaceF - lastSpaceF) > 0.003) { applySpace(spaceF); lastSpaceF = spaceF; }
-      if (renderer.xr.isPresenting && !tp && !loading) { checkShipTrigger(); updateVR(dt); }
+      if (renderer.xr.isPresenting && !tp) { checkShipTrigger(); updateVR(dt); }
       else if (!renderer.xr.isPresenting) {
         // no menus, no modes: while waiting for VR, the camera slowly circles the tower
         const a = gameT * 0.06;
@@ -1623,17 +1620,11 @@
         f.m.position.y = f.base + Math.sin(gameT * f.sp + f.ph) * 0.4;
         f.m.rotation.y += dt * 0.05;
       }
-      // loading screen: 5-second countdown, dots cycle . .. ... and repeat
-      if (loading) {
-        loadT -= dt;
-        const d = (Math.floor((5 - loadT) / 0.45) % 3) + 1;
-        if (d !== loadDots) { drawLoading(d); loadDots = d; }
-        fadeMat.opacity = 1;
-        if (loadT <= 0) {
-          loading = false;
-          camera.remove(loadPanel);
-          fadeMat.opacity = 0; // the world appears
-        }
+      // splash fade-out
+      if (splashT > 0) {
+        splashT -= dt;
+        if (splashT < 1.2) splashMat.opacity = Math.max(splashT / 1.2, 0);
+        if (splashT <= 0) camera.remove(splash);
       }
     }
     renderer.render(scene, camera);
@@ -1644,8 +1635,8 @@
     initAudio();
     renderer.xr.setReferenceSpaceType('local-floor');
     renderer.xr.setSession(session);
-    camera.position.set(0, 0, 0);
-    startLoading(); // 5 seconds of black + VirtualUP + Loading...
+    camera.position.set(0, 0, 0); // hand control back to the headset
+    showSplash();
     // Meta menu opens -> auto-pause. Menu closes -> resume with hand history
     // wiped, so exiting the menu can never fling you off the map.
     let autoPaused = false;
@@ -1667,8 +1658,8 @@
 })();
 </script>
 <script>
-// bootstrap — the only code that runs when the website opens. The game and the
-// 3D engine are NOT loaded until WebXR is actually granted.
+// bootstrap — the only code that runs when the website opens. The 3D engine and
+// the game are loaded only after the user clicks Start VR.
 (function () {
   function showError(msg) {
     let bar = document.getElementById('errbar');
