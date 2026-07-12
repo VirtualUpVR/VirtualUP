@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP</title>
+<title>VirtualUP — Gorilla Climb</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -741,6 +741,147 @@
         addBox(cx2 + (ax ? -sg : 0.55) * (ax ? L / 6 : 1) + (ax ? 0 : 0), py + 0.55, cz2 + (ax ? 0.55 : -sg * L / 6), 0.5, 0.8, 0.5, m); // blocker rail A
         addBox(cx2 + (ax ? sg * L / 6 : -0.55), py + 0.55, cz2 + (ax ? -0.55 : sg * L / 6), 0.5, 0.8, 0.5, m);                            // blocker rail B
         px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
+      },
+      // ---- 15 newer mechanics ----
+      function descent(m, t) { // Only DOWN for a moment — then a pegged riser
+        for (let i = 0; i < 3; i++) { step(-1.4, -1.0, 1.2, 1.6); addBox(px, py, pz, 1.0, 0.35, 1.0, m); }
+        step(0.6, 0.8, 1.2, 1.5);
+        addBox(px, py + 2.6, pz, 0.55, 5.4, 0.55, m);
+        for (let i = 0; i < 5; i++) {
+          const a = i * 1.5;
+          addBox(px + Math.cos(a) * 0.48, py + 0.6 + i * 1.0, pz + Math.sin(a) * 0.48, 0.32, 0.24, 0.32, m);
+        }
+        py += 5.5; mark();
+      },
+      function gates(m, t) { // sliding door pairs — pass when they open
+        for (let i = 0; i < 2; i++) {
+          heading += (rnd() - 0.5) * 0.8;
+          const ax = snapAxis(), sg = snapSign(ax), L = 3.2;
+          py += 0.5;
+          const cx2 = px + (ax ? sg * L / 2 : 0), cz2 = pz + (ax ? 0 : sg * L / 2);
+          addBox(cx2, py, cz2, ax ? L : 0.9, 0.3, ax ? 0.9 : L, m);
+          const pX = ax ? 0 : 1, pZ = ax ? 1 : 0;
+          addMover(cx2 + pX * 0.9, py + 1.35, cz2 + pZ * 0.9, ax ? 0.3 : 1.2, 2.2, ax ? 1.2 : 0.3, m, pX * 0.85, 0, pZ * 0.85, 0.9, 0);
+          addMover(cx2 - pX * 0.9, py + 1.35, cz2 - pZ * 0.9, ax ? 0.3 : 1.2, 2.2, ax ? 1.2 : 0.3, m, pX * 0.85, 0, pZ * 0.85, 0.9, Math.PI);
+          px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
+        }
+      },
+      function stepper(m, t) { // a rippling wave escalator of lifts
+        step(0.6, 0.8, 1.2, 1.5); addBox(px, py, pz, 1.2, 0.35, 1.2, m);
+        for (let i = 0; i < 5; i++) {
+          step(0.55, 0.7, 1.0, 1.2);
+          addMover(px, py, pz, 0.9, 0.35, 0.9, m, 0, 0.55, 0, 1.4, i * 0.9);
+        }
+      },
+      function funnel(m, t) { // a spiral that keeps tightening inward
+        for (let i = 0; i < 6; i++) {
+          stepTurn(1.0 + i * 0.12, 0.7, 0.9, Math.max(1.3 - i * 0.12, 0.7), Math.max(1.4 - i * 0.12, 0.8));
+          const s = 0.9 - i * 0.08;
+          addBox(px, py, pz, s, 0.3, s, m);
+        }
+      },
+      function outposts(m, t) { // wall-vault, then a huge leap, twice
+        for (let i = 0; i < 2; i++) {
+          step(0.5, 0.7, 1.4, 1.7);
+          const ax = snapAxis();
+          addBox(px, py + 1.1, pz, ax ? 0.5 : 1.6, 2.2, ax ? 1.6 : 0.5, m);
+          py += 2.4; mark();
+          step(0.7, 0.9, 1.9, 2.2);
+          addBox(px, py, pz, 1.0, 0.35, 1.0, m);
+        }
+      },
+      function transfer(m, t) { // ferry ride straight onto a rising lift
+        step(0.6, 0.8, 1.2, 1.4); addBox(px, py, pz, 1.3, 0.4, 1.3, m);
+        heading += (rnd() - 0.5) * 0.8;
+        const ax = snapAxis(), sg = snapSign(ax), GAP = 4.2;
+        addMover(px + (ax ? sg * GAP / 2 : 0), py + 0.5, pz + (ax ? 0 : sg * GAP / 2), 1.5, 0.4, 1.5, m, ax ? 1.6 : 0, 0, ax ? 0 : 1.6, 0.5);
+        px += ax ? sg * GAP : 0; pz += ax ? 0 : sg * GAP; mark();
+        addMover(px, py + 2.2, pz, 1.0, 0.35, 1.0, m, 0, 1.4, 0, 0.6);
+        py += 4.2; mark();
+        step(0.1, 0.3, 1.2, 1.4); addBox(px, py, pz, 1.2, 0.35, 1.2, m);
+      },
+      function crownRing(m, t) { // a rising ring of platforms around a void
+        step(0.7, 0.9, 1.3, 1.5); addBox(px, py, pz, 1.0, 0.35, 1.0, m);
+        const cxx = px + Math.cos(heading) * 1.9, czz = pz + Math.sin(heading) * 1.9;
+        const baseY = py + 0.6;
+        let la = 0;
+        for (let i = 0; i < 6; i++) {
+          la = heading + Math.PI + (i + 1) * (Math.PI * 2 / 7);
+          addBox(cxx + Math.cos(la) * 1.9, baseY + i * 0.45, czz + Math.sin(la) * 1.9, 0.8, 0.3, 0.8, m);
+        }
+        px = cxx + Math.cos(la) * 1.9; pz = czz + Math.sin(la) * 1.9; py = baseY + 5 * 0.45; mark();
+      },
+      function ladder(m, t) { // a proper rung ladder up a wall
+        step(0.7, 0.9, 1.2, 1.5); addBox(px, py, pz, 1.4, 0.35, 1.4, m);
+        const ax = snapAxis();
+        addBox(px, py + 2.0, pz, ax ? 0.35 : 1.2, 3.6, ax ? 1.2 : 0.35, m);
+        for (let i = 0; i < 5; i++) {
+          for (const s of [-0.33, 0.33]) {
+            addBox(px + (ax ? s : 0), py + 0.7 + i * 0.65, pz + (ax ? 0 : s), ax ? 0.3 : 0.9, 0.12, ax ? 0.9 : 0.3, m);
+          }
+        }
+        py += 4.0; mark();
+      },
+      function tunnel(m, t) { // a low crawl-box — swing through, no standing
+        heading += (rnd() - 0.5) * 0.8;
+        const ax = snapAxis(), sg = snapSign(ax), L = 3.6;
+        py += 0.5;
+        const cx2 = px + (ax ? sg * L / 2 : 0), cz2 = pz + (ax ? 0 : sg * L / 2);
+        addBox(cx2, py, cz2, ax ? L : 1.2, 0.3, ax ? 1.2 : L, m);                        // floor
+        addBox(cx2, py + 1.65, cz2, ax ? L : 1.2, 0.3, ax ? 1.2 : L, m);                 // low ceiling
+        addBox(cx2 + (ax ? 0 : 0.72), py + 0.85, cz2 + (ax ? 0.72 : 0), ax ? L : 0.25, 1.1, ax ? 0.25 : L, m);
+        addBox(cx2 - (ax ? 0 : 0.72), py + 0.85, cz2 - (ax ? 0.72 : 0), ax ? L : 0.25, 1.1, ax ? 0.25 : L, m);
+        px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
+      },
+      function stilts(m, t) { // hop the tops of towering thin poles
+        for (let i = 0; i < 3; i++) {
+          step(0.4, 0.6, 1.3, 1.6);
+          addBox(px, py - 2.4, pz, 0.42, 5.0, 0.42, m);
+          addBox(px, py + 0.15, pz, 0.6, 0.3, 0.6, m);
+        }
+      },
+      function barSwing(m, t) { // bar, platform, bar, platform — mixed swinging
+        for (let c = 0; c < 2; c++) {
+          const baseY = py;
+          heading += (rnd() - 0.5) * 0.5;
+          px += Math.cos(heading) * 1.05; pz += Math.sin(heading) * 1.05;
+          addBox(px, baseY + 2.15, pz, 0.7, 0.18, 0.7, m);
+          heading += (rnd() - 0.5) * 0.5;
+          px += Math.cos(heading) * 1.15; pz += Math.sin(heading) * 1.15;
+          py = baseY + 0.85;
+          addBox(px, py, pz, 1.0, 0.35, 1.0, m); mark();
+        }
+      },
+      function bigLift(m, t) { // one huge fast elevator — time your board
+        step(0.5, 0.7, 1.3, 1.5); addBox(px, py, pz, 1.2, 0.4, 1.2, m);
+        step(0.3, 0.5, 1.4, 1.6);
+        addMover(px, py + 2.0, pz, 1.3, 0.4, 1.3, m, 0, 2.4, 0, 0.7);
+        py += 4.6; mark();
+        step(0.1, 0.3, 1.3, 1.5); addBox(px, py, pz, 1.2, 0.4, 1.2, m);
+      },
+      function shelves(m, t) { // staggered shelf ledges up a sheer wall
+        step(0.7, 0.9, 1.2, 1.5);
+        const ax = snapAxis();
+        addBox(px, py + 2.4, pz, ax ? 0.4 : 1.4, 4.4, ax ? 1.4 : 0.4, m);
+        for (let i = 0; i < 4; i++) {
+          const s = i % 2 ? 0.55 : -0.55;
+          addBox(px + (ax ? (i % 2 ? 0.45 : -0.45) : s), py + 0.7 + i * 1.0, pz + (ax ? s : (i % 2 ? 0.45 : -0.45)), 0.5, 0.18, 0.5, m);
+        }
+        py += 4.7; mark();
+      },
+      function twinIsles(m, t) { // two huge islands, one lonely pebble between
+        step(0.8, 1.0, 1.6, 1.8); addBox(px, py, pz, 3.6, 0.5, 3.6, m);
+        step(0.6, 0.8, 2.3, 2.5); addBox(px, py, pz, 0.5, 0.3, 0.5, m);
+        step(0.6, 0.8, 2.3, 2.5); addBox(px, py, pz, 3.6, 0.5, 3.6, m);
+      },
+      function cornerBeams(m, t) { // two long beams meeting at a right angle
+        for (let j = 0; j < 2; j++) {
+          if (j === 1) heading += Math.PI / 2;
+          const ax = snapAxis(), sg = snapSign(ax), L = 3.2;
+          py += 0.55;
+          addBox(px + (ax ? sg * L / 2 : 0), py, pz + (ax ? 0 : sg * L / 2), ax ? L : 0.4, 0.3, ax ? 0.4 : L, m);
+          px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
+        }
       }
     ];
 
@@ -791,19 +932,82 @@
       addBox(px + (ax ? sg * L / 2 : 0), py, pz + (ax ? 0 : sg * L / 2), ax ? L : 0.4, 0.3, ax ? 0.4 : L, matObsidian);
       px += ax ? sg * L : 0; pz += ax ? 0 : sg * L; mark();
     }
-    function sigFinalAscent(t) { // the only triple-combo in the game
+    function sigFinalAscent(t) { // the last level before the summit
       SEG[9](matStar, 1);      // pebbles
       SEG[15](matObsidian, 1); // monkey bars
       SEG[12](matGold, 1);     // sliders
     }
-    const SIGNATURES = { 25: sigGreatWall, 50: sigElevatorShaft, 75: sigMaze, 100: sigAsteroidField, 125: sigVoidRope, 135: sigFinalAscent };
+    function sigSpire(t) { // one 12-meter pegged needle
+      step(0.8, 1.0, 1.3, 1.5);
+      addBox(px, py, pz, 2.0, 0.5, 2.0, matCrystal);
+      addBox(px, py + 6.2, pz, 0.6, 12.0, 0.6, matCrystal);
+      for (let i = 0; i < 10; i++) {
+        const a = i * 1.4;
+        addBox(px + Math.cos(a) * 0.52, py + 0.8 + i * 1.15, pz + Math.sin(a) * 0.52, 0.34, 0.24, 0.34, matStar);
+      }
+      py += 12.4; mark();
+    }
+    function sigGateGauntlet(t) { // sliding gates back to back to back
+      SEG[36](matStorm, t);   // gates x2
+      SEG[36](matSlate, t);   // gates x2 more
+    }
+    function sigLongRide(t) { // one ferry, twelve meters of nothing below
+      step(0.6, 0.8, 1.2, 1.4);
+      addBox(px, py, pz, 1.5, 0.4, 1.5, matCopper);
+      heading += (rnd() - 0.5) * 0.6;
+      const ax = Math.abs(Math.cos(heading)) > Math.abs(Math.sin(heading));
+      const sg = ((ax ? Math.cos(heading) : Math.sin(heading)) >= 0 ? 1 : -1);
+      const GAP = 12;
+      addMover(px + (ax ? sg * GAP / 2 : 0), py + 0.5, pz + (ax ? 0 : sg * GAP / 2), 1.8, 0.4, 1.8, matCopper, ax ? 5.1 : 0, 0, ax ? 0 : 5.1, 0.25);
+      px += ax ? sg * GAP : 0; pz += ax ? 0 : sg * GAP; py += 1.1;
+      addBox(px, py, pz, 1.5, 0.4, 1.5, matCopper); mark();
+    }
+    function sigDarkMaze(t) { // the maze again — but obsidian, lit only by its exit
+      step(0.9, 1.0, 1.3, 1.5);
+      addBox(px, py, pz, 6, 0.5, 6, matObsidian);
+      const fy = py + 0.25;
+      addBox(px - 1.0, fy + 0.9, pz - 1.5, 4.0, 1.8, 0.3, matObsidian);
+      addBox(px + 1.0, fy + 0.9, pz,       4.0, 1.8, 0.3, matObsidian);
+      addBox(px - 1.0, fy + 0.9, pz + 1.5, 4.0, 1.8, 0.3, matObsidian);
+      addBox(px + 2.4, fy + 0.7, pz + 2.4, 0.9, 1.4, 0.9, matStar);
+      px += 2.4; pz += 2.4; py = fy + 1.4; mark();
+    }
+    function sigSkyLadder(t) { // three rung ladders stacked into the void
+      SEG[42](matSnow, t);
+      SEG[42](matIce, t);
+      SEG[42](matStar, t);
+    }
+    function sigLeapOfFaith(t) { // a diving board, one huge falling leap, a net
+      heading += (rnd() - 0.5) * 0.6;
+      const ax = Math.abs(Math.cos(heading)) > Math.abs(Math.sin(heading));
+      const sg = ((ax ? Math.cos(heading) : Math.sin(heading)) >= 0 ? 1 : -1);
+      py += 0.6;
+      addBox(px + (ax ? sg * 1.25 : 0), py, pz + (ax ? 0 : sg * 1.25), ax ? 2.5 : 0.5, 0.3, ax ? 0.5 : 2.5, matBeam2); // the board
+      px += ax ? sg * 2.5 : 0; pz += ax ? 0 : sg * 2.5; mark();
+      px += ax ? sg * 3.0 : 0; pz += ax ? 0 : sg * 3.0; py -= 1.5;                    // the leap
+      addBox(px, py, pz, 3.2, 0.4, 3.2, matCloud); mark();                             // the net
+      for (let i = 0; i < 3; i++) { step(0.7, 0.9, 1.0, 1.2); addBox(px, py, pz, 0.9, 0.3, 0.9, matCloud); }
+    }
+    const SIGNATURES = { 25: sigGreatWall, 50: sigElevatorShaft, 75: sigMaze, 100: sigAsteroidField,
+                         125: sigVoidRope, 160: sigSpire, 190: sigGateGauntlet, 220: sigLongRide,
+                         250: sigDarkMaze, 280: sigSkyLadder, 310: sigLeapOfFaith, 335: sigFinalAscent };
 
-    // every non-signature level is a UNIQUE unordered pair of two different mechanics
+    // levels 1–199 (non-signature): a UNIQUE unordered PAIR of mechanics.
+    // levels 200–335 (non-signature): a UNIQUE unordered TRIPLE — longer, harder,
+    // and no combination in the whole game ever repeats.
     const pairs = [];
     for (let i = 0; i < SEG.length; i++) for (let j = i + 1; j < SEG.length; j++) pairs.push([i, j]);
     for (let i = pairs.length - 1; i > 0; i--) { // deterministic shuffle
       const k = Math.floor(rnd() * (i + 1));
       const tmp = pairs[i]; pairs[i] = pairs[k]; pairs[k] = tmp;
+    }
+    const triples = [];
+    for (let i = 0; i < SEG.length; i++)
+      for (let j = i + 1; j < SEG.length; j++)
+        for (let k = j + 1; k < SEG.length; k++) triples.push([i, j, k]);
+    for (let i = triples.length - 1; i > 0; i--) {
+      const k = Math.floor(rnd() * (i + 1));
+      const tmp = triples[i]; triples[i] = triples[k]; triples[k] = tmp;
     }
 
     const palette = [matRock, matRock2, matMoss, matWood, matSand, matIce, matMush, matLava,
@@ -811,15 +1015,20 @@
                      matCopper, matEmerald, matObsidian, matSnow, matHoney, matCoral, matMint,
                      matSlate].concat(rainbowMats);
 
-    let p = 0;
-    for (let z = 0; z < 136; z++) {
+    let p = 0, tr = 0;
+    for (let z = 0; z < 336; z++) {
       const t = Math.min(z / 40, 1); // difficulty ramps over the first 40 space levels
       if (SIGNATURES[z]) {
         SIGNATURES[z](t);
-      } else {
+      } else if (z < 200) {
         const pr = pairs[p++];
         SEG[pr[0]](palette[(z * 7 + pr[0]) % palette.length], t);
         SEG[pr[1]](palette[(z * 13 + pr[1] + 5) % palette.length], t);
+      } else {
+        const tri = triples[tr++];
+        SEG[tri[0]](palette[(z * 7 + tri[0]) % palette.length], t);
+        SEG[tri[1]](palette[(z * 13 + tri[1] + 5) % palette.length], t);
+        SEG[tri[2]](palette[(z * 17 + tri[2] + 11) % palette.length], t);
       }
       // rest platform between levels
       step(1.1, 1.3, 1.0, 1.5);
@@ -852,7 +1061,7 @@
 
   // ---------- floating decor: drifting rocks + far islands (no collision, no NPCs) ----------
   const floaters = [];
-  for (let i = 0; i < 160; i++) {
+  for (let i = 0; i < 260; i++) {
     const p = pathPts[Math.floor(rnd() * pathPts.length)];
     const a = rnd() * Math.PI * 2;
     const r = 6 + rnd() * 10;
@@ -864,7 +1073,7 @@
     floaters.push({ m: rock, base: rock.position.y, ph: rnd() * 6.28, sp: 0.3 + rnd() * 0.5 });
   }
   // big far-off islands with a tree on top
-  for (let i = 0; i < 22; i++) {
+  for (let i = 0; i < 30; i++) {
     const p = pathPts[Math.floor(rnd() * pathPts.length)];
     const a = rnd() * Math.PI * 2;
     const r = 14 + rnd() * 8;
