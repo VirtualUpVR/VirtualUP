@@ -305,15 +305,16 @@
 
   // ---------- hands (VR) ----------
   const HAND_R = 0.09;
+  const ARM_SCALE = 1.5; // gorilla arms: hand reach is amplified from the head, like Gorilla Tag
   const handGeo = new THREE.SphereGeometry(HAND_R, 12, 10);
   const handMat = new THREE.MeshLambertMaterial({ color: 0x3b2a1e });
   const controllers = [];
   for (let i = 0; i < 2; i++) {
     const c = renderer.xr.getController(i);
-    const ball = new THREE.Mesh(handGeo, handMat);
-    c.add(ball);
     rig.add(c);
-    controllers.push({ ctrl: c, prev: null });
+    const ball = new THREE.Mesh(handGeo, handMat);
+    rig.add(ball);
+    controllers.push({ ctrl: c, ball: ball, prev: null });
   }
 
   // ---------- physics helpers ----------
@@ -365,7 +366,9 @@
     _push.set(0, 0, 0);
 
     for (const h of controllers) {
-      _local.copy(h.ctrl.position);
+      // gorilla arms: stretch the hand outward from the head so knuckles reach the ground
+      _local.copy(h.ctrl.position).sub(camera.position).multiplyScalar(ARM_SCALE).add(camera.position);
+      h.ball.position.copy(_local);
       _world.copy(_local).add(rig.position);
       const hit = sphereHit(_world, HAND_R);
       if (hit && h.prev) {
@@ -385,30 +388,12 @@
       velocity.copy(_delta).multiplyScalar(-1 / Math.max(dt, 1 / 120));
       if (velocity.length() > MAX_SPEED) velocity.setLength(MAX_SPEED);
     } else {
+      // no body hitbox — only your hands hold you up, just like a real gorilla
       velocity.y -= GRAV * dt;
       if (velocity.length() > MAX_SPEED * 1.4) velocity.setLength(MAX_SPEED * 1.4);
       rig.position.addScaledVector(velocity, dt);
-      landOnTops();
     }
     respawnIfFallen();
-  }
-
-  // let the player stand: feet point under the headset settles on box tops
-  const _feet = new THREE.Vector3();
-  function landOnTops() {
-    if (velocity.y > 0) return;
-    camera.getWorldPosition(_feet);
-    _feet.y = rig.position.y;
-    for (const b of colliders) {
-      if (_feet.x > b.min.x && _feet.x < b.max.x && _feet.z > b.min.z && _feet.z < b.max.z) {
-        const top = b.max.y;
-        if (_feet.y >= top - 0.25 && _feet.y <= top + 0.05) {
-          rig.position.y = top;
-          velocity.set(velocity.x * 0.4, 0, velocity.z * 0.4);
-          return;
-        }
-      }
-    }
   }
 
   // ---------- flat-screen + phone mode ----------
