@@ -41,7 +41,7 @@
 <body>
 <div id="overlay">
   <h1>VirtualUP</h1>
-  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then survive 55 floating levels cycling through 13 themes — rocks, beams, treetops, ruins, ice, mushrooms, embers, clouds, crystals, storms, rainbow, stars — getting harder as you rise. Fall and you start over at the bottom.</p>
+  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then survive 55 unique floating levels — switchbacks, spirals, tightropes, walls, treetops, and moving platforms that slide, bob, and orbit. Every level is different, and they get harder as you rise. Fall and you start over at the bottom.</p>
   <button id="vrbtn" disabled>CHECKING VR…</button>
   <button id="mobilebtn">Play on phone — move phone to look</button>
   <button id="flatbtn">Preview on flat screen</button>
@@ -167,6 +167,39 @@
     py += gapMin + rnd() * (gapMax - gapMin);
     pathPts.push({ x: px, y: py, z: pz });
   }
+  // stepper with a fixed turn — for zigzags, spirals and rings
+  function stepTurn(turn, gapMin, gapMax, distMin, distMax) {
+    heading += turn;
+    const d = distMin + rnd() * (distMax - distMin);
+    px += Math.cos(heading) * d;
+    pz += Math.sin(heading) * d;
+    py += gapMin + rnd() * (gapMax - gapMin);
+    pathPts.push({ x: px, y: py, z: pz });
+  }
+
+  // ---------- moving platforms ----------
+  const movers = [];
+  function addMover(x, y, z, w, h, d, mat, ax, ay, az, sp) {
+    const mesh = addBox(x, y, z, w, h, d, mat);
+    mesh.matrixAutoUpdate = true; // this one moves
+    const col = colliders[colliders.length - 1];
+    const m = { mesh, col, cx: x, cy: y, cz: z, w, h, d, ax, ay, az, sp,
+                ph: rnd() * 6.28, delta: new THREE.Vector3(), prev: new THREE.Vector3(x, y, z) };
+    col.mover = m;
+    movers.push(m);
+  }
+  function updateMovers(t) {
+    for (const m of movers) {
+      const s = Math.sin(t * m.sp + m.ph), c = Math.cos(t * m.sp + m.ph);
+      const nx = m.cx + s * m.ax, ny = m.cy + s * m.ay, nz = m.cz + c * m.az;
+      m.delta.set(nx - m.prev.x, ny - m.prev.y, nz - m.prev.z);
+      if (m.delta.length() > 0.5) m.delta.set(0, 0, 0); // ignore first-frame jump
+      m.prev.set(nx, ny, nz);
+      m.mesh.position.set(nx, ny, nz);
+      m.col.min.set(nx - m.w / 2, ny - m.h / 2, nz - m.d / 2);
+      m.col.max.set(nx + m.w / 2, ny + m.h / 2, nz + m.d / 2);
+    }
+  }
 
   // extra materials for the upper levels
   const matMush    = new THREE.MeshLambertMaterial({ color: 0xd8433a });
@@ -177,70 +210,198 @@
   const matStorm   = new THREE.MeshLambertMaterial({ color: 0x4a4f5c });
   const matBeam2   = new THREE.MeshLambertMaterial({ color: 0x5c3d22 });
   const matStar    = new THREE.MeshLambertMaterial({ color: 0xfff1a8, emissive: 0xb08d00, emissiveIntensity: 0.8 });
+  const matPink    = new THREE.MeshLambertMaterial({ color: 0xf2a9c4 });
+  const matPurple  = new THREE.MeshLambertMaterial({ color: 0x8d6fd1 });
+  const matCopper  = new THREE.MeshLambertMaterial({ color: 0xc57a3d });
+  const matEmerald = new THREE.MeshLambertMaterial({ color: 0x2fae6e });
+  const matObsidian= new THREE.MeshLambertMaterial({ color: 0x232028, emissive: 0x2d1f45, emissiveIntensity: 0.5 });
+  const matSnow    = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const matHoney   = new THREE.MeshLambertMaterial({ color: 0xe8b83a });
+  const matCoral   = new THREE.MeshLambertMaterial({ color: 0xf07860 });
+  const matMint    = new THREE.MeshLambertMaterial({ color: 0x9fe8c8 });
+  const matSlate   = new THREE.MeshLambertMaterial({ color: 0x6b7b8c });
   const rainbowMats = [0xe63946, 0xf77f24, 0xffd23f, 0x57cc57, 0x35a7ff, 0x7b5be6, 0xd05ce3]
     .map(c => new THREE.MeshLambertMaterial({ color: c }));
 
-  // ============ THE FLOATING LEVELS — 55 of them ============
-  // 13 themes cycle forever; difficulty ramps over the first 20 levels, then holds at "hard but fair"
-  const THEMES = [
-    { kind: 'slab',     mats: [matRock, matRock2] },              // floating rocks
-    { kind: 'beam',     mats: [matWood],  bw: 2.4, bt: 0.5 },     // wooden beams
-    { kind: 'tree',     mats: [leafMat] },                        // sky canopy
-    { kind: 'column',   mats: [matSand] },                        // sky ruins
-    { kind: 'slab',     mats: [matIce] },                         // ice steps
-    { kind: 'mushroom', mats: [matMush] },                        // mushroom hop
-    { kind: 'slab',     mats: [matLava, matStorm] },              // ember stones
-    { kind: 'slab',     mats: [matCloud] },                       // cloud hop
-    { kind: 'column',   mats: [matCrystal] },                     // crystal spires
-    { kind: 'beam',     mats: [matBeam2], bw: 2.6, bt: 0.4 },     // high beams
-    { kind: 'slab',     mats: [matStorm, matRock2] },             // storm rocks
-    { kind: 'rainbow',  mats: rainbowMats },                      // rainbow road
-    { kind: 'slab',     mats: [matStar] }                         // star steps
+  // ============ 55 UNIQUE FLOATING LEVELS ============
+  // k = mechanic, m = material(s). No two levels share the same mechanic+look.
+  // Moving platforms first appear at level 9 (~95m up).
+  const LEVELS = [
+    { k: 'slab',     m: [matRock, matRock2] },     // 1  Floating Rocks
+    { k: 'beam',     m: [matWood], bt: 0.5 },      // 2  Wooden Beams
+    { k: 'tree',     cm: leafMat },                // 3  Sky Canopy
+    { k: 'stairs',   m: [matSand] },               // 4  Sandstone Stairs
+    { k: 'column',   m: [matSand] },               // 5  Sky Ruins
+    { k: 'zigzag',   m: [matIce] },                // 6  Ice Switchbacks
+    { k: 'mushroom', cm: matMush },                // 7  Mushroom Hop
+    { k: 'pairs',    m: [matMoss] },               // 8  Twin Gardens
+    { k: 'moveH',    m: [matCloud] },              // 9  Drifting Clouds — first movers
+    { k: 'spiral',   m: [matWood] },               // 10 Spiral Scaffold
+    { k: 'slab',     m: [matLava] },               // 11 Ember Stones
+    { k: 'ring',     m: [matCrystal] },            // 12 Crystal Ring
+    { k: 'longjump', m: [matCloud] },              // 13 Big Air
+    { k: 'moveV',    m: [matCopper] },             // 14 Copper Elevators
+    { k: 'bridge',   m: [matBeam2] },              // 15 The Tightrope
+    { k: 'tiny',     m: [matMint] },               // 16 Pebble Path
+    { k: 'column',   m: [matCrystal] },            // 17 Crystal Spires
+    { k: 'rainbow',  m: rainbowMats },             // 18 Rainbow Road
+    { k: 'orbit',    m: [matStorm] },              // 19 Storm Orbit
+    { k: 'wall',     m: [matSand] },               // 20 The Great Walls
+    { k: 'zigzag',   m: [matCoral] },              // 21 Coral Switchbacks
+    { k: 'tree',     cm: matPink },                // 22 Sakura Canopy
+    { k: 'beam',     m: [matObsidian], bt: 0.42 }, // 23 Obsidian Beams
+    { k: 'pairs',    m: [matIce] },                // 24 Frozen Twins
+    { k: 'moveH',    m: [matLava] },               // 25 Sliding Embers
+    { k: 'spiral',   m: [matCrystal] },            // 26 Crystal Corkscrew
+    { k: 'stairs',   m: [matSnow] },               // 27 Snow Steps
+    { k: 'longjump', m: [matStorm] },              // 28 Storm Leaps
+    { k: 'mushroom', cm: matPurple },              // 29 Wild Mushrooms
+    { k: 'orbit',    m: [matCloud] },              // 30 Cloud Carousel
+    { k: 'slab',     m: [matHoney] },              // 31 Honey Slabs
+    { k: 'ring',     m: rainbowMats },             // 32 Rainbow Ring
+    { k: 'wall',     m: [matStorm] },              // 33 Storm Walls
+    { k: 'bridge',   m: [matIce] },                // 34 Ice Tightrope
+    { k: 'moveV',    m: [matStar] },               // 35 Star Lifts
+    { k: 'tiny',     m: [matObsidian] },           // 36 Dark Pebbles
+    { k: 'zigzag',   m: [matEmerald] },            // 37 Emerald Switchbacks
+    { k: 'column',   m: [matObsidian] },           // 38 Obsidian Monoliths
+    { k: 'pairs',    m: [matLava] },               // 39 Twin Embers
+    { k: 'spiral',   m: [matSlate] },              // 40 Slate Corkscrew
+    { k: 'moveH',    m: [matCrystal] },            // 41 Gliding Crystals
+    { k: 'tree',     cm: matSnow },                // 42 Frozen Canopy
+    { k: 'longjump', m: [matStar] },               // 43 Star Leaps
+    { k: 'orbit',    m: [matIce] },                // 44 Ice Carousel
+    { k: 'beam',     m: [matPink], bt: 0.36 },     // 45 Sakura Beams
+    { k: 'wall',     m: [matCrystal] },            // 46 Crystal Walls
+    { k: 'ring',     m: [matStorm] },              // 47 Storm Ring
+    { k: 'mushroom', cm: matMint },                // 48 Mint Mushrooms
+    { k: 'moveV',    m: [matObsidian] },           // 49 Obsidian Elevators
+    { k: 'tiny',     m: [matStar] },               // 50 Star Pebbles
+    { k: 'machine',  m: [matCopper, matSlate] },   // 51 The Machine — every platform moves
+    { k: 'zigzag',   m: [matStar] },               // 52 Star Switchbacks
+    { k: 'spiral',   m: [matGold] },               // 53 Golden Corkscrew
+    { k: 'bridge',   m: [matStorm] },              // 54 The Last Tightrope
+    { k: 'gauntlet', m: [matStar, matObsidian, matGold] } // 55 The Final Gauntlet
   ];
 
-  const LEVEL_COUNT = 55;          // floating levels (plus the tower = 56 total)
-  const PLATFORMS_PER_LEVEL = 6;
-
-  for (let z = 0; z < LEVEL_COUNT; z++) {
-    const theme = THEMES[z % THEMES.length];
+  for (let z = 0; z < LEVELS.length; z++) {
+    const L = LEVELS[z];
     const t = Math.min(z / 20, 1);                     // 0 easy → 1 max difficulty
-    const gap0 = 1.1 + t * 0.3,  gap1 = 1.5 + t * 0.4; // climbs up to [1.4, 1.9]
-    const d0   = 1.0 + t * 0.2,  d1   = 1.8 + t * 0.3; // jumps up to [1.2, 2.1]
-    const sMax = 1.3 - t * 0.55;                       // platforms shrink to ~0.75
-    const sMin = sMax - 0.15;
+    const g0 = 1.1 + t * 0.3,  g1 = 1.5 + t * 0.4;     // climbs up to [1.4, 1.9]
+    const d0 = 1.0 + t * 0.2,  d1 = 1.8 + t * 0.3;     // jumps up to [1.2, 2.1]
+    const sMax = 1.3 - t * 0.55, sMin = sMax - 0.15;   // platforms shrink to ~0.75
+    const S = () => sMin + rnd() * (sMax - sMin);
+    const pick = i => L.m[i % L.m.length];
 
-    for (let i = 0; i < PLATFORMS_PER_LEVEL; i++) {
-      step(gap0, gap1, d0, d1);
-      const s = sMin + rnd() * (sMax - sMin);
-      if (theme.kind === 'beam') {
+    if (L.k === 'slab') {
+      for (let i = 0; i < 6; i++) { step(g0, g1, d0, d1); const s = S(); addBox(px, py, pz, s, 0.35, s, pick(i)); }
+    } else if (L.k === 'rainbow') {
+      for (let i = 0; i < 7; i++) { step(g0, g1, d0, d1); const s = S(); addBox(px, py, pz, s, 0.35, s, pick(i)); }
+    } else if (L.k === 'beam') {
+      for (let i = 0; i < 6; i++) {
+        step(g0, g1, d0, d1);
         const along = i % 2 === 0;
-        const bt = Math.max(theme.bt - t * 0.1, 0.3);
-        addBox(px, py, pz, along ? theme.bw : bt, 0.25, along ? bt : theme.bw, theme.mats[0]);
-      } else if (theme.kind === 'tree') {
-        const crown = new THREE.Mesh(new THREE.ConeGeometry(Math.max(s * 1.4, 1.0), 2.4, 7), leafMat);
+        addBox(px, py, pz, along ? 2.4 : L.bt, 0.25, along ? L.bt : 2.4, pick(i));
+      }
+    } else if (L.k === 'tree') {
+      for (let i = 0; i < 6; i++) {
+        step(g0, g1, d0, d1);
+        const s = Math.max(S(), 0.8);
+        const crown = new THREE.Mesh(new THREE.ConeGeometry(s * 1.4, 2.4, 7), L.cm);
         crown.position.set(px, py - 1.1, pz);
         crown.updateMatrix(); crown.matrixAutoUpdate = false;
         scene.add(crown);
-        addBox(px, py, pz, s, 0.3, s, leafMat); // flat treetop you land on
-      } else if (theme.kind === 'column' && i % 3 === 2) {
-        // a tall column — climb its side, stand on top
-        addBox(px, py + 1.0, pz, 0.8, 2.4, 0.8, theme.mats[0]);
-        py += 2.2;
-        pathPts.push({ x: px, y: py, z: pz });
-      } else if (theme.kind === 'mushroom') {
+        addBox(px, py, pz, s, 0.3, s, L.cm);
+      }
+    } else if (L.k === 'column') {
+      for (let i = 0; i < 6; i++) {
+        step(g0, g1, d0, d1);
+        if (i % 3 === 2) {
+          addBox(px, py + 1.0, pz, 0.8, 2.4, 0.8, pick(0)); // climb its side, stand on top
+          py += 2.2;
+          pathPts.push({ x: px, y: py, z: pz });
+        } else { const s = S(); addBox(px, py, pz, s, 0.35, s, pick(i)); }
+      }
+    } else if (L.k === 'mushroom') {
+      for (let i = 0; i < 6; i++) {
+        step(g0, g1, d0, d1);
+        const s = S();
         const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, 1.6, 6), matStem);
         stem.position.set(px, py - 1.0, pz);
         stem.updateMatrix(); stem.matrixAutoUpdate = false;
         scene.add(stem);
-        addBox(px, py, pz, s, 0.35, s, matMush); // the cap you land on
-      } else if (theme.kind === 'rainbow') {
-        addBox(px, py, pz, s, 0.35, s, theme.mats[i % theme.mats.length]);
-      } else {
-        addBox(px, py, pz, s, 0.35, s, theme.mats[i % theme.mats.length]);
+        addBox(px, py, pz, s, 0.35, s, L.cm);
+      }
+    } else if (L.k === 'stairs') { // a quick, kind breather — small tight steps
+      for (let i = 0; i < 10; i++) { stepTurn((rnd() - 0.5) * 0.5, 0.5, 0.65, 0.6, 0.8); addBox(px, py, pz, 0.9, 0.3, 0.9, pick(i)); }
+    } else if (L.k === 'zigzag') { // hard switchbacks — the path snaps left-right
+      for (let i = 0; i < 7; i++) { stepTurn(i % 2 === 0 ? 1.4 : -1.4, g0, g1, d0, d1); const s = S(); addBox(px, py, pz, s, 0.35, s, pick(i)); }
+    } else if (L.k === 'spiral') { // a tight corkscrew staircase in the sky
+      for (let i = 0; i < 9; i++) { stepTurn(0.85, 0.85, 1.05, 1.1, 1.3); const s = Math.max(S() - 0.1, 0.6); addBox(px, py, pz, s, 0.3, s, pick(i)); }
+    } else if (L.k === 'ring') { // a wide arc — swing around the curve
+      for (let i = 0; i < 8; i++) { stepTurn(0.4, 1.0, 1.25, 1.5, 1.7); const s = S(); addBox(px, py, pz, s, 0.35, s, pick(i)); }
+    } else if (L.k === 'longjump') { // few platforms, huge horizontal leaps, gentle rises
+      for (let i = 0; i < 5; i++) { step(0.8, 1.1, 2.0, 2.4); const s = Math.max(S(), 0.95); addBox(px, py, pz, s, 0.35, s, pick(i)); }
+    } else if (L.k === 'tiny') { // dinner-plate platforms, but mercifully close together
+      for (let i = 0; i < 8; i++) { step(1.0, 1.2, 0.9, 1.2); addBox(px, py, pz, 0.55, 0.3, 0.55, pick(i)); }
+    } else if (L.k === 'bridge') { // long narrow tightropes, axis-aligned
+      for (let j = 0; j < 3; j++) {
+        heading += (rnd() - 0.5) * 1.2;
+        const alongX = Math.abs(Math.cos(heading)) > Math.abs(Math.sin(heading));
+        const sgn = (alongX ? Math.cos(heading) : Math.sin(heading)) >= 0 ? 1 : -1;
+        const len = 5.5;
+        py += 0.7;
+        addBox(px + (alongX ? sgn * len / 2 : 0), py, pz + (alongX ? 0 : sgn * len / 2),
+               alongX ? len : 0.45, 0.3, alongX ? 0.45 : len, pick(j));
+        px += alongX ? sgn * len : 0;
+        pz += alongX ? 0 : sgn * len;
+        pathPts.push({ x: px, y: py, z: pz });
+      }
+    } else if (L.k === 'wall') { // vault a series of tall walls
+      for (let i = 0; i < 4; i++) {
+        step(0.5, 0.7, 1.4, 1.7);
+        const alongX = Math.abs(Math.cos(heading)) > Math.abs(Math.sin(heading));
+        addBox(px, py + 1.1, pz, alongX ? 0.5 : 1.8, 2.2, alongX ? 1.8 : 0.5, pick(i));
+        py += 2.4;
+        pathPts.push({ x: px, y: py, z: pz });
+      }
+    } else if (L.k === 'moveH') { // platforms sliding side to side
+      for (let i = 0; i < 6; i++) {
+        step(g0, Math.min(g1, 1.6), d0, d1);
+        const s = Math.max(S(), 0.9);
+        addMover(px, py, pz, s, 0.35, s, pick(i), 1.1, 0, 0, 0.7 + rnd() * 0.5);
+      }
+    } else if (L.k === 'moveV') { // elevators bobbing up and down — time your grab
+      for (let i = 0; i < 6; i++) {
+        step(0.9, 1.2, d0, Math.min(d1, 1.8));
+        const s = Math.max(S(), 0.9);
+        addMover(px, py, pz, s, 0.35, s, pick(i), 0, 0.7, 0, 0.8 + rnd() * 0.4);
+      }
+    } else if (L.k === 'orbit') { // platforms circling in the air
+      for (let i = 0; i < 6; i++) {
+        step(g0, Math.min(g1, 1.6), d0, Math.min(d1, 1.8));
+        const s = Math.max(S(), 0.9);
+        addMover(px, py, pz, s, 0.35, s, pick(i), 0.9, 0, 0.9, 0.55 + rnd() * 0.35);
+      }
+    } else if (L.k === 'machine') { // every platform moves a different way
+      for (let i = 0; i < 7; i++) {
+        step(1.0, 1.4, 1.1, 1.7);
+        const s = Math.max(S(), 0.85);
+        const mode = i % 3;
+        if (mode === 0)      addMover(px, py, pz, s, 0.35, s, pick(i), 1.0, 0, 0, 0.8 + rnd() * 0.4);
+        else if (mode === 1) addMover(px, py, pz, s, 0.35, s, pick(i), 0, 0.6, 0, 0.9 + rnd() * 0.4);
+        else                 addMover(px, py, pz, s, 0.35, s, pick(i), 0.8, 0, 0.8, 0.6 + rnd() * 0.3);
+      }
+    } else if (L.k === 'gauntlet') { // a bit of everything, tiny and far
+      for (let i = 0; i < 9; i++) {
+        if (i % 3 === 0) { step(0.8, 1.1, 1.9, 2.2); addBox(px, py, pz, 0.95, 0.35, 0.95, pick(i)); }
+        else if (i % 3 === 1) { step(1.2, 1.5, 1.0, 1.3); addBox(px, py, pz, 0.55, 0.3, 0.55, pick(i)); }
+        else { stepTurn(i % 2 === 0 ? 1.3 : -1.3, 1.2, 1.5, 1.2, 1.6); const s = S(); addBox(px, py, pz, s, 0.35, s, pick(i)); }
       }
     }
+
     // a wider rest platform between levels — earn your breather
-    if (z < LEVEL_COUNT - 1) {
+    if (z < LEVELS.length - 1) {
       step(1.1, 1.3, 1.0, 1.5);
       addBox(px, py, pz, 2.0, 0.45, 2.0, matMoss);
     }
@@ -443,7 +604,7 @@
       const d = _n.length();
       if (d < r) {
         if (d < 1e-5) { _n.set(0, 1, 0); } else { _n.divideScalar(d); }
-        return { normal: _n.clone(), depth: r - d };
+        return { normal: _n.clone(), depth: r - d, mover: colliders[i].mover || null };
       }
     }
     return null;
@@ -465,6 +626,7 @@
 
   function updateVR(dt) {
     let touching = 0;
+    let ride = null;
     _delta.set(0, 0, 0);
     _push.set(0, 0, 0);
 
@@ -485,6 +647,7 @@
           h.cool = 0.15;
         }
         h.offTime = 0;
+        if (hit.mover) ride = hit.mover;
         // pin the hand: move the body opposite to hand movement
         _delta.add(_local.clone().sub(h.prev));
         _push.add(hit.normal.multiplyScalar(hit.depth));
@@ -501,6 +664,7 @@
       _delta.divideScalar(touching);
       rig.position.sub(_delta);       // stick to the wall
       rig.position.add(_push);        // resolve penetration
+      if (ride) rig.position.add(ride.delta); // riding a moving platform carries you
       velocity.copy(_delta).multiplyScalar(-1 / Math.max(dt, 1 / 120));
       if (velocity.length() > MAX_SPEED) velocity.setLength(MAX_SPEED);
     } else {
@@ -678,6 +842,7 @@
         if (velocity.y <= 0 && p.y >= b.max.y - 0.35 && p.y <= b.max.y + 0.05) {
           p.y = b.max.y; velocity.y = 0;
           if (!wasGrounded && fallSpeed > 3) playHit(Math.min(fallSpeed * 0.6, 4));
+          if (b.mover) { p.x += b.mover.delta.x; p.z += b.mover.delta.z; }
           grounded = true;
         }
       }
@@ -699,6 +864,7 @@
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
     const t = clock.elapsedTime;
+    updateMovers(t);
     if (renderer.xr.isPresenting) updateVR(dt);
     else if (flat) updateFlat(dt);
     // gentle bobbing of the floating decor
