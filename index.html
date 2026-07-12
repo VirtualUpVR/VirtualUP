@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP — Gorilla Climb</title>
+<title>VirtualUP</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -52,10 +52,31 @@
   <div id="stick"><div id="knob"></div></div>
   <button id="jumpbtn">JUMP</button>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin="anonymous"></script>
 <script>
 (function () {
   'use strict';
+
+  // ---- error visibility: show real errors on screen instead of a silent crash ----
+  function showError(msg) {
+    let bar = document.getElementById('errbar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'errbar';
+      bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99;background:#7a1020;color:#fff;' +
+        'font:13px monospace;padding:8px 12px;white-space:pre-wrap;';
+      document.body.appendChild(bar);
+    }
+    bar.textContent = 'Game error: ' + msg + '  (reload the page; check your internet if it repeats)';
+  }
+  window.addEventListener('error', e => showError(e.message || 'unknown script error'));
+  window.addEventListener('unhandledrejection', e => showError((e.reason && e.reason.message) || 'unhandled promise'));
+
+  // if the 3D engine failed to download (bad Wi-Fi etc.), say so instead of crashing
+  if (typeof THREE === 'undefined') {
+    showError('the 3D engine failed to load — check your internet connection and reload');
+    return;
+  }
 
   // ---------- renderer / scene ----------
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -381,14 +402,18 @@
     px = 2000; pz = 0; py = 30; heading = rnd() * 6.28;
     addBox(px, py, pz, 4.2, 0.5, 4.2, matObsidian); // arrival pad
     pathPts.push({ x: px, y: py, z: pz });
-    // the ship that brought you, parked at the pad's edge (decor)
-    const hull = new THREE.Mesh(unitBox, matSlate);
-    hull.position.set(px, py + 1.4, pz - 2.9); hull.scale.set(2.0, 2.2, 2.4);
-    hull.updateMatrix(); hull.matrixAutoUpdate = false;
+    // the ship that brought you, parked at the pad's edge — SOLID now, but
+    // purely decorative: you can land on it, and it never teleports you anywhere
+    addBox(px, py + 1.4, pz - 2.9, 2.0, 2.2, 2.4, matSlate); // hull with collision
     const nose2 = new THREE.Mesh(new THREE.ConeGeometry(1.1, 1.6, 8), matCoral);
     nose2.position.set(px, py + 3.3, pz - 2.9);
     nose2.updateMatrix(); nose2.matrixAutoUpdate = false;
-    scene.add(hull, nose2);
+    scene.add(nose2);
+    // invisible collider for the nose cone (kept smaller than the cone so no phantom edges)
+    colliders.push({
+      min: new THREE.Vector3(px - 0.6, py + 2.5, pz - 3.5),
+      max: new THREE.Vector3(px + 0.6, py + 3.7, pz - 2.3)
+    });
     py += 1.2;
   }
 
@@ -988,7 +1013,7 @@
       fadeMat.opacity = 1;
       if (tp.t >= 2.5) {
         tp.phase = 'in'; tp.t = 0;
-        if (audioCtx) audioCtx.resume(); // sound returns with the stars
+        if (audioCtx) audioCtx.resume().catch(function(){}); // sound returns with the stars
       }
     } else {
       fadeMat.opacity = Math.max(1 - tp.t / 0.8, 0);
@@ -1036,7 +1061,7 @@
   let audioCtx = null;
   let noiseBuf = null;
   function initAudio() {
-    if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+    if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume().catch(function(){}); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     audioCtx = new AC();
@@ -1115,6 +1140,8 @@
   const velocity = new THREE.Vector3();
   const MAX_SPEED = 8.5;
   const GRAV = 9.8;
+  const SPACE_GRAV = 5.5; // low gravity in space — floaty, but not moon-floaty
+  const grav = () => (inSpace ? SPACE_GRAV : GRAV);
 
   function closestPointOnBox(p, box, out) {
     out.set(
@@ -1187,6 +1214,7 @@
   const _world = new THREE.Vector3();
   const _delta = new THREE.Vector3();
   const _push = new THREE.Vector3();
+  const _headW = new THREE.Vector3();
 
   function updateVR(dt) {
     let touching = 0;
@@ -1233,10 +1261,18 @@
       velocity.copy(_delta).multiplyScalar(-1 / Math.max(dt, 1 / 120));
       if (velocity.length() > MAX_SPEED) velocity.setLength(MAX_SPEED);
     } else {
-      // no body hitbox — only your hands hold you up, just like a real gorilla
-      velocity.y -= GRAV * dt;
+      // hands hold you up; gravity is lighter on the space map
+      velocity.y -= grav() * dt;
       if (velocity.length() > MAX_SPEED * 1.4) velocity.setLength(MAX_SPEED * 1.4);
       rig.position.addScaledVector(velocity, dt);
+    }
+    // head hitbox — your face can't clip through blocks anymore
+    camera.getWorldPosition(_headW);
+    const hh = sphereHit(_headW, 0.16);
+    if (hh) {
+      rig.position.addScaledVector(hh.normal, hh.depth);
+      const into = velocity.dot(hh.normal);
+      if (into < 0) velocity.addScaledVector(hh.normal, -into);
     }
     respawnIfFallen();
   }
@@ -1400,7 +1436,7 @@
     }
     velocity.x = move.x; velocity.z = move.z;
     if (wantJump && grounded) { velocity.y = 5.4; grounded = false; }
-    velocity.y -= GRAV * dt;
+    velocity.y -= grav() * dt;
     rig.position.addScaledVector(velocity, dt);
 
     // land on tops
