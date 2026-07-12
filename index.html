@@ -41,7 +41,7 @@
 <body>
 <div id="overlay">
   <h1>VirtualUP</h1>
-  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then take on the floating levels: rocks, beams, treetops, sky ruins, and ice. Fall and you start over at the bottom.</p>
+  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then survive 55 floating levels cycling through 13 themes — rocks, beams, treetops, ruins, ice, mushrooms, embers, clouds, crystals, storms, rainbow, stars — getting harder as you rise. Fall and you start over at the bottom.</p>
   <button id="vrbtn" disabled>CHECKING VR…</button>
   <button id="mobilebtn">Play on phone — move phone to look</button>
   <button id="flatbtn">Preview on flat screen</button>
@@ -67,7 +67,7 @@
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87c5e8);
-  scene.fog = new THREE.Fog(0x87c5e8, 30, 140);
+  scene.fog = new THREE.Fog(0x87c5e8, 30, 170);
 
   const sun = new THREE.DirectionalLight(0xfff3d6, 1.0);
   sun.position.set(20, 60, 10);
@@ -98,9 +98,13 @@
   const matWood  = new THREE.MeshLambertMaterial({ color: 0x8a5a33 });
   const matGold  = new THREE.MeshLambertMaterial({ color: 0xffd23f, emissive: 0x6b5200 });
 
+  const unitBox = new THREE.BoxGeometry(1, 1, 1);
   function addBox(x, y, z, w, h, d, mat) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    const mesh = new THREE.Mesh(unitBox, mat);
     mesh.position.set(x, y, z);
+    mesh.scale.set(w, h, d);
+    mesh.updateMatrix();
+    mesh.matrixAutoUpdate = false; // static world: skip per-frame matrix math for ~450 platforms
     scene.add(mesh);
     colliders.push({
       min: new THREE.Vector3(x - w / 2, y - h / 2, z - d / 2),
@@ -164,50 +168,82 @@
     pathPts.push({ x: px, y: py, z: pz });
   }
 
-  // ============ LEVEL 2 — FLOATING ROCKS ============
-  for (let i = 0; i < 12; i++) {
-    step(1.1, 1.5, 1.0, 1.8);
-    const s = 1.3 - i * 0.03;
-    addBox(px, py, pz, s, 0.4, s, i % 3 ? matRock : matRock2);
-  }
+  // extra materials for the upper levels
+  const matMush    = new THREE.MeshLambertMaterial({ color: 0xd8433a });
+  const matStem    = new THREE.MeshLambertMaterial({ color: 0xf0e6d2 });
+  const matLava    = new THREE.MeshLambertMaterial({ color: 0x3a2a26, emissive: 0xff5a1f, emissiveIntensity: 0.55 });
+  const matCloud   = new THREE.MeshLambertMaterial({ color: 0xf5f8ff, emissive: 0x39404d, emissiveIntensity: 0.4 });
+  const matCrystal = new THREE.MeshLambertMaterial({ color: 0x7fe8e0, emissive: 0x0e5c56, emissiveIntensity: 0.7 });
+  const matStorm   = new THREE.MeshLambertMaterial({ color: 0x4a4f5c });
+  const matBeam2   = new THREE.MeshLambertMaterial({ color: 0x5c3d22 });
+  const matStar    = new THREE.MeshLambertMaterial({ color: 0xfff1a8, emissive: 0xb08d00, emissiveIntensity: 0.8 });
+  const rainbowMats = [0xe63946, 0xf77f24, 0xffd23f, 0x57cc57, 0x35a7ff, 0x7b5be6, 0xd05ce3]
+    .map(c => new THREE.MeshLambertMaterial({ color: c }));
 
-  // ============ LEVEL 3 — WOODEN BEAMS ============
-  for (let i = 0; i < 10; i++) {
-    step(1.2, 1.6, 1.1, 1.9);
-    const along = i % 2 === 0;
-    addBox(px, py, pz, along ? 2.4 : 0.5, 0.25, along ? 0.5 : 2.4, matWood);
-  }
+  // ============ THE FLOATING LEVELS — 55 of them ============
+  // 13 themes cycle forever; difficulty ramps over the first 20 levels, then holds at "hard but fair"
+  const THEMES = [
+    { kind: 'slab',     mats: [matRock, matRock2] },              // floating rocks
+    { kind: 'beam',     mats: [matWood],  bw: 2.4, bt: 0.5 },     // wooden beams
+    { kind: 'tree',     mats: [leafMat] },                        // sky canopy
+    { kind: 'column',   mats: [matSand] },                        // sky ruins
+    { kind: 'slab',     mats: [matIce] },                         // ice steps
+    { kind: 'mushroom', mats: [matMush] },                        // mushroom hop
+    { kind: 'slab',     mats: [matLava, matStorm] },              // ember stones
+    { kind: 'slab',     mats: [matCloud] },                       // cloud hop
+    { kind: 'column',   mats: [matCrystal] },                     // crystal spires
+    { kind: 'beam',     mats: [matBeam2], bw: 2.6, bt: 0.4 },     // high beams
+    { kind: 'slab',     mats: [matStorm, matRock2] },             // storm rocks
+    { kind: 'rainbow',  mats: rainbowMats },                      // rainbow road
+    { kind: 'slab',     mats: [matStar] }                         // star steps
+  ];
 
-  // ============ LEVEL 4 — SKY CANOPY (run the treetops) ============
-  for (let i = 0; i < 9; i++) {
-    step(1.3, 1.7, 1.2, 2.0);
-    const crown = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.6, 7), leafMat);
-    crown.position.set(px, py - 1.1, pz);
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.8, 6), trunkMat);
-    trunk.position.set(px, py - 3.4, pz);
-    scene.add(crown, trunk);
-    addBox(px, py, pz, 1.0, 0.3, 1.0, leafMat); // flat treetop you land on
-  }
+  const LEVEL_COUNT = 55;          // floating levels (plus the tower = 56 total)
+  const PLATFORMS_PER_LEVEL = 6;
 
-  // ============ LEVEL 5 — SKY RUINS ============
-  for (let i = 0; i < 11; i++) {
-    step(1.3, 1.7, 1.1, 1.9);
-    if (i % 3 === 2) {
-      // a tall sandstone column — climb its side, stand on top
-      addBox(px, py + 1.0, pz, 0.8, 2.4, 0.8, matSand);
-      py += 2.2;
-      pathPts.push({ x: px, y: py, z: pz });
-    } else {
-      const s = 1.0 - i * 0.02;
-      addBox(px, py, pz, s, 0.45, s, matSand);
+  for (let z = 0; z < LEVEL_COUNT; z++) {
+    const theme = THEMES[z % THEMES.length];
+    const t = Math.min(z / 20, 1);                     // 0 easy → 1 max difficulty
+    const gap0 = 1.1 + t * 0.3,  gap1 = 1.5 + t * 0.4; // climbs up to [1.4, 1.9]
+    const d0   = 1.0 + t * 0.2,  d1   = 1.8 + t * 0.3; // jumps up to [1.2, 2.1]
+    const sMax = 1.3 - t * 0.55;                       // platforms shrink to ~0.75
+    const sMin = sMax - 0.15;
+
+    for (let i = 0; i < PLATFORMS_PER_LEVEL; i++) {
+      step(gap0, gap1, d0, d1);
+      const s = sMin + rnd() * (sMax - sMin);
+      if (theme.kind === 'beam') {
+        const along = i % 2 === 0;
+        const bt = Math.max(theme.bt - t * 0.1, 0.3);
+        addBox(px, py, pz, along ? theme.bw : bt, 0.25, along ? bt : theme.bw, theme.mats[0]);
+      } else if (theme.kind === 'tree') {
+        const crown = new THREE.Mesh(new THREE.ConeGeometry(Math.max(s * 1.4, 1.0), 2.4, 7), leafMat);
+        crown.position.set(px, py - 1.1, pz);
+        crown.updateMatrix(); crown.matrixAutoUpdate = false;
+        scene.add(crown);
+        addBox(px, py, pz, s, 0.3, s, leafMat); // flat treetop you land on
+      } else if (theme.kind === 'column' && i % 3 === 2) {
+        // a tall column — climb its side, stand on top
+        addBox(px, py + 1.0, pz, 0.8, 2.4, 0.8, theme.mats[0]);
+        py += 2.2;
+        pathPts.push({ x: px, y: py, z: pz });
+      } else if (theme.kind === 'mushroom') {
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, 1.6, 6), matStem);
+        stem.position.set(px, py - 1.0, pz);
+        stem.updateMatrix(); stem.matrixAutoUpdate = false;
+        scene.add(stem);
+        addBox(px, py, pz, s, 0.35, s, matMush); // the cap you land on
+      } else if (theme.kind === 'rainbow') {
+        addBox(px, py, pz, s, 0.35, s, theme.mats[i % theme.mats.length]);
+      } else {
+        addBox(px, py, pz, s, 0.35, s, theme.mats[i % theme.mats.length]);
+      }
     }
-  }
-
-  // ============ LEVEL 6 — ICE STEPS (small, far apart — the final test) ============
-  for (let i = 0; i < 10; i++) {
-    step(1.4, 1.9, 1.2, 2.0);
-    const s = 0.85 - i * 0.015;
-    addBox(px, py, pz, s, 0.3, s, matIce);
+    // a wider rest platform between levels — earn your breather
+    if (z < LEVEL_COUNT - 1) {
+      step(1.1, 1.3, 1.0, 1.5);
+      addBox(px, py, pz, 2.0, 0.45, 2.0, matMoss);
+    }
   }
 
   // ============ SUMMIT ============
@@ -235,7 +271,7 @@
 
   // ---------- floating decor: drifting rocks + far islands (no collision, no NPCs) ----------
   const floaters = [];
-  for (let i = 0; i < 34; i++) {
+  for (let i = 0; i < 110; i++) {
     const p = pathPts[Math.floor(rnd() * pathPts.length)];
     const a = rnd() * Math.PI * 2;
     const r = 6 + rnd() * 10;
@@ -246,8 +282,8 @@
     scene.add(rock);
     floaters.push({ m: rock, base: rock.position.y, ph: rnd() * 6.28, sp: 0.3 + rnd() * 0.5 });
   }
-  // four big far-off islands with a tree on top
-  for (let i = 0; i < 4; i++) {
+  // big far-off islands with a tree on top
+  for (let i = 0; i < 14; i++) {
     const p = pathPts[Math.floor(rnd() * pathPts.length)];
     const a = rnd() * Math.PI * 2;
     const r = 14 + rnd() * 8;
@@ -303,6 +339,46 @@
     splashMat.opacity = 1;
     camera.add(splash);
     splashT = 4.5;
+  }
+
+  // ---------- hit sounds (synthesized, no files) ----------
+  let audioCtx = null;
+  let noiseBuf = null;
+  function initAudio() {
+    if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx = new AC();
+    // short burst of noise for the "slap" texture
+    noiseBuf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.06), audioCtx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+  }
+  function playHit(strength) {
+    if (!audioCtx || audioCtx.state !== 'running') return;
+    const t = audioCtx.currentTime;
+    const v = Math.min(0.45, 0.07 + strength * 0.09);
+    const out = audioCtx.createGain();
+    out.gain.setValueAtTime(v, t);
+    out.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+    out.connect(audioCtx.destination);
+    // low thump
+    const o = audioCtx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150 + Math.random() * 50 + strength * 25, t);
+    o.frequency.exponentialRampToValueAtTime(55, t + 0.11);
+    o.connect(out);
+    o.start(t); o.stop(t + 0.13);
+    // slap noise
+    const ns = audioCtx.createBufferSource();
+    ns.buffer = noiseBuf;
+    const hp = audioCtx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 900;
+    const ng = audioCtx.createGain();
+    ng.gain.setValueAtTime(v * 0.8, t);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    ns.connect(hp); hp.connect(ng); ng.connect(audioCtx.destination);
+    ns.start(t);
   }
 
   // ---------- hands (VR) ----------
@@ -400,10 +476,16 @@
       const hit = sphereHit(_world, HAND_R);
       if (hit && h.prev) {
         touching++;
+        // fresh contact? play a slap, louder the faster the hand was moving
+        if (!h.wasTouching) {
+          const speed = _local.distanceTo(h.prev) / Math.max(dt, 1 / 120);
+          playHit(Math.min(speed, 4));
+        }
         // pin the hand: move the body opposite to hand movement
         _delta.add(_local.clone().sub(h.prev));
         _push.add(hit.normal.multiplyScalar(hit.depth));
       }
+      h.wasTouching = !!hit;
       h.prev = h.prev || new THREE.Vector3();
       h.prev.copy(_local);
     }
@@ -432,6 +514,7 @@
   const UP = new THREE.Vector3(0, 1, 0);
 
   function startFlat() {
+    initAudio();
     flat = true;
     document.getElementById('overlay').style.display = 'none';
     document.getElementById('hint').style.display = 'block';
@@ -475,6 +558,7 @@
   }
 
   function startMobile() {
+    initAudio();
     const go = () => {
       mobile = true; flat = true;
       document.getElementById('overlay').style.display = 'none';
@@ -578,12 +662,16 @@
     rig.position.addScaledVector(velocity, dt);
 
     // land on tops
+    const fallSpeed = -velocity.y;
+    const wasGrounded = grounded;
     grounded = false;
     const p = rig.position;
     for (const b of colliders) {
       if (p.x > b.min.x - 0.2 && p.x < b.max.x + 0.2 && p.z > b.min.z - 0.2 && p.z < b.max.z + 0.2) {
         if (velocity.y <= 0 && p.y >= b.max.y - 0.35 && p.y <= b.max.y + 0.05) {
-          p.y = b.max.y; velocity.y = 0; grounded = true;
+          p.y = b.max.y; velocity.y = 0;
+          if (!wasGrounded && fallSpeed > 3) playHit(Math.min(fallSpeed * 0.6, 4));
+          grounded = true;
         }
       }
     }
@@ -635,6 +723,7 @@
     vrbtn.textContent = 'VR NOT AVAILABLE HERE';
   }
   vrbtn.addEventListener('click', () => {
+    initAudio();
     navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
       .then(session => {
         renderer.xr.setReferenceSpaceType('local-floor');
