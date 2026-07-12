@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP</title>
+<title>VirtualUP — Gorilla Climb</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -20,8 +20,7 @@
 </head>
 <body>
 <div id="startpage"><button id="startvr">Start VR</button></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin="anonymous"></script>
-<script>
+<script type="text/plain" id="gamecode">
 (function () {
   'use strict';
 
@@ -1209,30 +1208,33 @@
     }
   }
 
-  // ---------- VirtualUP splash (shows when VR starts) ----------
-  const splashCvs = document.createElement('canvas');
-  splashCvs.width = 1024; splashCvs.height = 256;
-  {
-    const g = splashCvs.getContext('2d');
-    g.clearRect(0, 0, 1024, 256);
-    g.font = 'bold 150px Trebuchet MS';
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.lineWidth = 16; g.strokeStyle = '#123c26';
-    g.strokeText('VirtualUP', 512, 128);
-    g.fillStyle = '#ffd23f';
-    g.fillText('VirtualUP', 512, 128);
+  // ---------- loading screen (black, 5 seconds, shown in VR) ----------
+  // "VirtualUP" over black, with Loading. / Loading.. / Loading... cycling.
+  const loadCvs = document.createElement('canvas');
+  loadCvs.width = 512; loadCvs.height = 256;
+  const loadCtx = loadCvs.getContext('2d');
+  const loadTex = new THREE.CanvasTexture(loadCvs);
+  const loadPanel = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.0, 0.5),
+    new THREE.MeshBasicMaterial({ map: loadTex, transparent: true, depthTest: false })
+  );
+  loadPanel.renderOrder = 1005;
+  loadPanel.position.set(0, 0, -1.5);
+  let loading = false, loadT = 0, loadDots = -1;
+  function drawLoading(dots) {
+    const g = loadCtx;
+    g.clearRect(0, 0, 512, 256);
+    g.textAlign = 'center';
+    g.fillStyle = '#ffffff'; g.font = 'bold 84px Trebuchet MS';
+    g.fillText('VirtualUP', 256, 110);
+    g.textAlign = 'left'; g.font = 'bold 40px Trebuchet MS';
+    g.fillText('Loading' + '...'.slice(0, dots), 178, 196);
+    loadTex.needsUpdate = true;
   }
-  const splashMat = new THREE.MeshBasicMaterial({
-    map: new THREE.CanvasTexture(splashCvs), transparent: true, depthTest: false
-  });
-  const splash = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 0.5), splashMat);
-  splash.renderOrder = 999;
-  let splashT = 0;
-  function showSplash() {
-    splash.position.set(0, 0, -1.8);
-    splashMat.opacity = 1;
-    camera.add(splash);
-    splashT = 4.5;
+  function startLoading() {
+    loading = true; loadT = 5; loadDots = -1;
+    fadeMat.opacity = 1;   // black screen
+    camera.add(loadPanel);
   }
 
   // ---------- hit sounds (synthesized, no files) ----------
@@ -1598,7 +1600,7 @@
   let gameT = 0; // game time stands still while paused, so movers resume exactly where they froze
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
-    if (renderer.xr.isPresenting) pollPauseButtons();
+    if (renderer.xr.isPresenting && !loading) pollPauseButtons();
     if (!paused) {
       gameT += dt;
       updateMovers(gameT);
@@ -1607,7 +1609,7 @@
       const sfTarget = inSpace ? 1 : 0;
       spaceF += (sfTarget - spaceF) * Math.min(dt * 2.5, 1);
       if (Math.abs(spaceF - lastSpaceF) > 0.003) { applySpace(spaceF); lastSpaceF = spaceF; }
-      if (renderer.xr.isPresenting && !tp) { checkShipTrigger(); updateVR(dt); }
+      if (renderer.xr.isPresenting && !tp && !loading) { checkShipTrigger(); updateVR(dt); }
       else if (!renderer.xr.isPresenting) {
         // no menus, no modes: while waiting for VR, the camera slowly circles the tower
         const a = gameT * 0.06;
@@ -1621,49 +1623,98 @@
         f.m.position.y = f.base + Math.sin(gameT * f.sp + f.ph) * 0.4;
         f.m.rotation.y += dt * 0.05;
       }
-      // splash fade-out
-      if (splashT > 0) {
-        splashT -= dt;
-        if (splashT < 1.2) splashMat.opacity = Math.max(splashT / 1.2, 0);
-        if (splashT <= 0) camera.remove(splash);
+      // loading screen: 5-second countdown, dots cycle . .. ... and repeat
+      if (loading) {
+        loadT -= dt;
+        const d = (Math.floor((5 - loadT) / 0.45) % 3) + 1;
+        if (d !== loadDots) { drawLoading(d); loadDots = d; }
+        fadeMat.opacity = 1;
+        if (loadT <= 0) {
+          loading = false;
+          camera.remove(loadPanel);
+          fadeMat.opacity = 0; // the world appears
+        }
       }
     }
     renderer.render(scene, camera);
   });
 
-  // ---------- start page ----------
-  // A plain white page with one button. Click Start VR and you're in.
-  const startPage = document.getElementById('startpage');
-  const startBtn = document.getElementById('startvr');
-  startBtn.addEventListener('click', () => {
-    if (!navigator.xr) { startBtn.textContent = 'VR not available on this device'; return; }
+  // ---------- launch (called by the bootstrap once WebXR is granted) ----------
+  window.__vuLaunch = function (session) {
+    initAudio();
+    renderer.xr.setReferenceSpaceType('local-floor');
+    renderer.xr.setSession(session);
+    camera.position.set(0, 0, 0);
+    startLoading(); // 5 seconds of black + VirtualUP + Loading...
+    // Meta menu opens -> auto-pause. Menu closes -> resume with hand history
+    // wiped, so exiting the menu can never fling you off the map.
+    let autoPaused = false;
+    session.addEventListener('visibilitychange', () => {
+      if (session.visibilityState !== 'visible') {
+        if (!paused) { autoPaused = true; togglePause(); }
+      } else {
+        controllers.forEach(c => { c.prev = null; c.wasTouching = false; });
+        if (autoPaused) { autoPaused = false; togglePause(); }
+      }
+    });
+    session.addEventListener('end', () => {
+      if (settingsOpen) setSettings(false);
+      else if (paused) togglePause(); // clean up cube hands
+      controllers.forEach(c => c.prev = null);
+      if (window.__vuShowStart) window.__vuShowStart();
+    });
+  };
+})();
+</script>
+<script>
+// bootstrap — the only code that runs when the website opens. The game and the
+// 3D engine are NOT loaded until WebXR is actually granted.
+(function () {
+  function showError(msg) {
+    let bar = document.getElementById('errbar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'errbar';
+      bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99;background:#7a1020;color:#fff;font:13px monospace;padding:8px 12px;white-space:pre-wrap;';
+      document.body.appendChild(bar);
+    }
+    bar.textContent = 'Game error: ' + msg;
+  }
+  window.addEventListener('error', function (e) { showError(e.message || 'unknown script error'); });
+  const page = document.getElementById('startpage');
+  const btn = document.getElementById('startvr');
+  window.__vuShowStart = function () { page.style.display = 'flex'; };
+  let launching = false;
+  btn.addEventListener('click', function () {
+    if (launching) return;
+    if (!navigator.xr) { btn.textContent = 'VR not available on this device'; return; }
+    launching = true;
+    btn.textContent = 'Starting…';
     navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
-      .then(session => {
-        initAudio();
-        renderer.xr.setReferenceSpaceType('local-floor');
-        renderer.xr.setSession(session);
-        camera.position.set(0, 0, 0); // hand control back to the headset
-        startPage.style.display = 'none';
-        showSplash();
-        // Meta menu opens -> auto-pause. Menu closes -> resume with hand history
-        // wiped, so exiting the menu can never fling you off the map.
-        let autoPaused = false;
-        session.addEventListener('visibilitychange', () => {
-          if (session.visibilityState !== 'visible') {
-            if (!paused) { autoPaused = true; togglePause(); }
-          } else {
-            controllers.forEach(c => { c.prev = null; c.wasTouching = false; });
-            if (autoPaused) { autoPaused = false; togglePause(); }
-          }
-        });
-        session.addEventListener('end', () => {
-          if (settingsOpen) setSettings(false);
-          else if (paused) togglePause(); // clean up cube hands
-          controllers.forEach(c => c.prev = null);
-          startPage.style.display = 'flex'; // back to the white page
-        });
+      .then(function (session) {
+        function boot() {
+          try {
+            if (!window.__vuLaunch) (0, eval)(document.getElementById('gamecode').textContent); // build the game NOW
+            window.__vuLaunch(session);
+            page.style.display = 'none';
+            btn.textContent = 'Start VR';
+          } catch (e) { showError(e.message); }
+          launching = false;
+        }
+        if (window.THREE) { boot(); return; }
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+        s.crossOrigin = 'anonymous';
+        s.onload = boot;
+        s.onerror = function () {
+          launching = false;
+          btn.textContent = 'Start VR';
+          showError('the 3D engine failed to download — check your internet and try again');
+          session.end();
+        };
+        document.head.appendChild(s);
       })
-      .catch(() => { startBtn.textContent = 'VR not available on this device'; });
+      .catch(function () { launching = false; btn.textContent = 'VR not available on this device'; });
   });
 })();
 </script>
