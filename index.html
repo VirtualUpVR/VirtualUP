@@ -1198,6 +1198,7 @@
       // gorilla arms: stretch the hand outward from the head so knuckles reach the ground
       _local.copy(h.ctrl.position).sub(camera.position).multiplyScalar(ARM_SCALE).add(camera.position);
       h.ball.position.copy(_local);
+      h.ball.quaternion.copy(h.ctrl.quaternion); // twist the controller, the pixel sphere spins with it
       _world.copy(_local).add(rig.position);
       const hit = sphereHit(_world, HAND_R);
       if (hit && h.prev) {
