@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ONLY UP — Gorilla Climb</title>
+<title>VirtualUP — Gorilla Climb</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -40,8 +40,8 @@
 </head>
 <body>
 <div id="overlay">
-  <h1>ONLY UP</h1>
-  <p><b>Gorilla-style climbing.</b> No buttons, no sticks. Push off surfaces with your hands to move, just like Gorilla Tag. Swing hard to launch. Reach the summit. Fall and you start over at the bottom.</p>
+  <h1>VirtualUP</h1>
+  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then take on the floating levels: rocks, beams, treetops, sky ruins, and ice. Fall and you start over at the bottom.</p>
   <button id="vrbtn" disabled>CHECKING VR…</button>
   <button id="mobilebtn">Play on phone — move phone to look</button>
   <button id="flatbtn">Preview on flat screen</button>
@@ -115,48 +115,103 @@
   addBox(3, 0.3, 3, 1.6, 0.6, 1.6, matRock);
   addBox(-3.4, 0.45, 2.2, 1.4, 0.9, 1.4, matRock2);
 
-  // central stone pillar the route spirals around
-  const pillar = new THREE.Mesh(
-    new THREE.CylinderGeometry(2.4, 3.2, 60, 10),
-    matRock2
-  );
-  pillar.position.set(0, 30, 0);
+  const matSand  = new THREE.MeshLambertMaterial({ color: 0xc9a86a });
+  const matIce   = new THREE.MeshLambertMaterial({ color: 0xdff2ff, emissive: 0x1d3340 });
+  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4526 });
+  const leafMat  = new THREE.MeshLambertMaterial({ color: 0x2f7a3a });
+
+  // deterministic "random" so the course is the same every run
+  let seed = 1;
+  function rnd() { seed++; return Math.abs(Math.sin(seed * 127.1 + 311.7) * 43758.5453) % 1; }
+
+  // ============ LEVEL 1 — THE TOWER (exactly 10 bricks) ============
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 3.2, 13, 10), matRock2);
+  pillar.position.set(0, 6.5, 0);
   scene.add(pillar);
-  // pillar collision approximated as a square core
   colliders.push({
     min: new THREE.Vector3(-2.1, 0, -2.1),
-    max: new THREE.Vector3(2.1, 60, 2.1)
+    max: new THREE.Vector3(2.1, 13, 2.1)
   });
 
-  // the spiral of ledges — gets harder as you rise
-  const ledges = [];
+  let px = 0, pz = 0, py = 1.0, heading = 0;
+  const pathPts = [];
   {
     let angle = 0;
-    let y = 1.0;
-    const R = 3.6;
-    const COUNT = 26;
-    for (let i = 0; i < COUNT; i++) {
-      const t = i / (COUNT - 1);              // 0 bottom → 1 top
-      const gap = 1.0 + t * 1.35;             // vertical gap grows: 1.0m → ~2.35m
-      const size = 1.5 - t * 0.75;            // ledges shrink: 1.5m → 0.75m
-      const x = Math.cos(angle) * R;
-      const z = Math.sin(angle) * R;
-      const mat = (i % 3 === 0) ? matWood : (i % 3 === 1 ? matRock : matRock2);
-      addBox(x, y, z, size, 0.35, size, mat);
-      ledges.push({ x, y, z });
-      angle += 0.85 + t * 0.25;               // spiral tightens slightly
-      y += gap;
+    for (let i = 0; i < 10; i++) {
+      px = Math.cos(angle) * 3.6;
+      pz = Math.sin(angle) * 3.6;
+      addBox(px, py, pz, 1.4, 0.35, 1.4, i % 2 ? matRock : matWood);
+      pathPts.push({ x: px, y: py, z: pz });
+      angle += 0.95;
+      py += 1.15;
     }
-    // a few wall studs on the pillar between the widest gaps (hard, but a saver)
-    for (let i = 18; i < 25; i += 2) {
-      const a = Math.atan2(ledges[i].z, ledges[i].x) + 0.45;
-      addBox(Math.cos(a) * 2.35, (ledges[i].y + ledges[i + 1 < 26 ? i + 1 : i].y) / 2,
-             Math.sin(a) * 2.35, 0.45, 0.3, 0.45, matRock);
-    }
-    // summit
-    var TOP_Y = y + 0.4;
-    addBox(0, TOP_Y, 0, 3.2, 0.5, 3.2, matGold);
+    // tower cap — catch your breath, the floating course starts here
+    addBox(0, py, 0, 4.4, 0.5, 4.4, matMoss);
+    pathPts.push({ x: 0, y: py, z: 0 });
+    px = 0; pz = 0; py += 0.2;
+    heading = angle;
   }
+
+  // path stepper for the floating levels — wanders across the sky
+  function step(gapMin, gapMax, distMin, distMax) {
+    heading += (rnd() - 0.5) * 1.5;
+    const d = distMin + rnd() * (distMax - distMin);
+    px += Math.cos(heading) * d;
+    pz += Math.sin(heading) * d;
+    py += gapMin + rnd() * (gapMax - gapMin);
+    pathPts.push({ x: px, y: py, z: pz });
+  }
+
+  // ============ LEVEL 2 — FLOATING ROCKS ============
+  for (let i = 0; i < 12; i++) {
+    step(1.1, 1.5, 1.0, 1.8);
+    const s = 1.3 - i * 0.03;
+    addBox(px, py, pz, s, 0.4, s, i % 3 ? matRock : matRock2);
+  }
+
+  // ============ LEVEL 3 — WOODEN BEAMS ============
+  for (let i = 0; i < 10; i++) {
+    step(1.2, 1.6, 1.1, 1.9);
+    const along = i % 2 === 0;
+    addBox(px, py, pz, along ? 2.4 : 0.5, 0.25, along ? 0.5 : 2.4, matWood);
+  }
+
+  // ============ LEVEL 4 — SKY CANOPY (run the treetops) ============
+  for (let i = 0; i < 9; i++) {
+    step(1.3, 1.7, 1.2, 2.0);
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.6, 7), leafMat);
+    crown.position.set(px, py - 1.1, pz);
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.8, 6), trunkMat);
+    trunk.position.set(px, py - 3.4, pz);
+    scene.add(crown, trunk);
+    addBox(px, py, pz, 1.0, 0.3, 1.0, leafMat); // flat treetop you land on
+  }
+
+  // ============ LEVEL 5 — SKY RUINS ============
+  for (let i = 0; i < 11; i++) {
+    step(1.3, 1.7, 1.1, 1.9);
+    if (i % 3 === 2) {
+      // a tall sandstone column — climb its side, stand on top
+      addBox(px, py + 1.0, pz, 0.8, 2.4, 0.8, matSand);
+      py += 2.2;
+      pathPts.push({ x: px, y: py, z: pz });
+    } else {
+      const s = 1.0 - i * 0.02;
+      addBox(px, py, pz, s, 0.45, s, matSand);
+    }
+  }
+
+  // ============ LEVEL 6 — ICE STEPS (small, far apart — the final test) ============
+  for (let i = 0; i < 10; i++) {
+    step(1.4, 1.9, 1.2, 2.0);
+    const s = 0.85 - i * 0.015;
+    addBox(px, py, pz, s, 0.3, s, matIce);
+  }
+
+  // ============ SUMMIT ============
+  py += 1.6;
+  const TOP_Y = py;
+  addBox(px, TOP_Y, pz, 3.4, 0.5, 3.4, matGold);
 
   // summit sign
   {
@@ -171,15 +226,45 @@
       new THREE.PlaneGeometry(2.4, 0.9),
       new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cvs), side: THREE.DoubleSide })
     );
-    sign.position.set(0, TOP_Y + 1.8, 0);
+    sign.position.set(px, TOP_Y + 1.8, pz);
     scene.add(sign);
-    // slowly spin so it's readable from anywhere
     sign.onBeforeRender = () => { sign.rotation.y += 0.004; };
   }
 
-  // distant jungle trees (decor only, no collision, no NPCs)
-  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4526 });
-  const leafMat = new THREE.MeshLambertMaterial({ color: 0x2f7a3a });
+  // ---------- floating decor: drifting rocks + far islands (no collision, no NPCs) ----------
+  const floaters = [];
+  for (let i = 0; i < 34; i++) {
+    const p = pathPts[Math.floor(rnd() * pathPts.length)];
+    const a = rnd() * Math.PI * 2;
+    const r = 6 + rnd() * 10;
+    const s = 0.4 + rnd() * 1.8;
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), i % 2 ? matRock : matRock2);
+    rock.position.set(p.x + Math.cos(a) * r, p.y + (rnd() - 0.5) * 5, p.z + Math.sin(a) * r);
+    rock.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+    scene.add(rock);
+    floaters.push({ m: rock, base: rock.position.y, ph: rnd() * 6.28, sp: 0.3 + rnd() * 0.5 });
+  }
+  // four big far-off islands with a tree on top
+  for (let i = 0; i < 4; i++) {
+    const p = pathPts[Math.floor(rnd() * pathPts.length)];
+    const a = rnd() * Math.PI * 2;
+    const r = 14 + rnd() * 8;
+    const ix = p.x + Math.cos(a) * r, iy = p.y + (rnd() - 0.5) * 6, iz = p.z + Math.sin(a) * r;
+    const island = new THREE.Group();
+    const top = new THREE.Mesh(new THREE.BoxGeometry(5, 0.8, 5), matMoss);
+    const under = new THREE.Mesh(new THREE.ConeGeometry(3.4, 4.5, 6), matRock2);
+    under.rotation.x = Math.PI; under.position.y = -2.6;
+    const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 3.4, 6), trunkMat);
+    tr.position.y = 2.1;
+    const cr = new THREE.Mesh(new THREE.ConeGeometry(2.0, 3.4, 7), leafMat);
+    cr.position.y = 4.6;
+    island.add(top, under, tr, cr);
+    island.position.set(ix, iy, iz);
+    scene.add(island);
+    floaters.push({ m: island, base: iy, ph: rnd() * 6.28, sp: 0.2 + rnd() * 0.25 });
+  }
+
+  // ground ring of jungle trees
   for (let i = 0; i < 26; i++) {
     const a = (i / 26) * Math.PI * 2;
     const r = 22 + (i * 7919 % 14);
@@ -190,6 +275,32 @@
     const crown = new THREE.Mesh(new THREE.ConeGeometry(2.6, 4.5, 7), leafMat);
     crown.position.set(tx, th + 1.6, tz);
     scene.add(trunk, crown);
+  }
+
+  // ---------- VirtualUP splash (shows when VR starts) ----------
+  const splashCvs = document.createElement('canvas');
+  splashCvs.width = 1024; splashCvs.height = 256;
+  {
+    const g = splashCvs.getContext('2d');
+    g.clearRect(0, 0, 1024, 256);
+    g.font = 'bold 150px Trebuchet MS';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineWidth = 16; g.strokeStyle = '#123c26';
+    g.strokeText('VirtualUP', 512, 128);
+    g.fillStyle = '#ffd23f';
+    g.fillText('VirtualUP', 512, 128);
+  }
+  const splashMat = new THREE.MeshBasicMaterial({
+    map: new THREE.CanvasTexture(splashCvs), transparent: true, depthTest: false
+  });
+  const splash = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 0.5), splashMat);
+  splash.renderOrder = 999;
+  let splashT = 0;
+  function showSplash() {
+    splash.position.set(0, 0, -1.8);
+    splashMat.opacity = 1;
+    camera.add(splash);
+    splashT = 4.5;
   }
 
   // ---------- hands (VR) ----------
@@ -481,8 +592,20 @@
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
+    const t = clock.elapsedTime;
     if (renderer.xr.isPresenting) updateVR(dt);
     else if (flat) updateFlat(dt);
+    // gentle bobbing of the floating decor
+    for (const f of floaters) {
+      f.m.position.y = f.base + Math.sin(t * f.sp + f.ph) * 0.4;
+      f.m.rotation.y += dt * 0.05;
+    }
+    // splash fade-out
+    if (splashT > 0) {
+      splashT -= dt;
+      if (splashT < 1.2) splashMat.opacity = Math.max(splashT / 1.2, 0);
+      if (splashT <= 0) camera.remove(splash);
+    }
     renderer.render(scene, camera);
   });
 
@@ -506,6 +629,7 @@
         renderer.xr.setReferenceSpaceType('local-floor');
         renderer.xr.setSession(session);
         document.getElementById('overlay').style.display = 'none';
+        showSplash();
         session.addEventListener('end', () => {
           document.getElementById('overlay').style.display = 'flex';
           controllers.forEach(c => c.prev = null);
