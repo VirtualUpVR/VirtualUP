@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP</title>
+<title>VirtualUP — Gorilla Climb</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -1177,6 +1177,7 @@
   function doTeleport() {
     rig.position.copy(SPACE_SPAWN);
     velocity.set(0, 0, 0);
+    rideMover = null; rideGrace = 0;
     controllers.forEach(c => { c.prev = null; c.wasTouching = false; });
     inSpace = true;
   }
@@ -1329,6 +1330,7 @@
 
   // ---------- physics helpers ----------
   const velocity = new THREE.Vector3();
+  let rideMover = null, rideGrace = 0; // sticky riding: movers can't slide out from under you
   const MAX_SPEED = 8.5;
   const GRAV = 9.8;
   const SPACE_GRAV = 5.5; // low gravity in space — floaty, but not moon-floaty
@@ -1389,6 +1391,7 @@
       if (rig.position.y < 5) {
         rig.position.copy(SPAWN);
         velocity.set(0, 0, 0);
+        rideMover = null; rideGrace = 0;
         controllers.forEach(c => c.prev = null);
         inSpace = false;
         teleported = false; // the ship will take you again... once you've earned it
@@ -1396,6 +1399,7 @@
     } else if (rig.position.y < -4) {
       rig.position.copy(SPAWN);
       velocity.set(0, 0, 0);
+      rideMover = null; rideGrace = 0;
       controllers.forEach(c => c.prev = null);
     }
   }
@@ -1448,7 +1452,6 @@
       _delta.divideScalar(touching);
       rig.position.sub(_delta);       // stick to the wall
       rig.position.add(_push);        // resolve penetration
-      if (ride) rig.position.add(ride.delta); // riding a moving platform carries you
       velocity.copy(_delta).multiplyScalar(-1 / Math.max(dt, 1 / 120));
       if (velocity.length() > MAX_SPEED) velocity.setLength(MAX_SPEED);
     } else {
@@ -1456,6 +1459,25 @@
       velocity.y -= grav() * dt;
       if (velocity.length() > MAX_SPEED * 1.4) velocity.setLength(MAX_SPEED * 1.4);
       rig.position.addScaledVector(velocity, dt);
+    }
+    // sticky riding: while a hand is on a mover you travel with it, and for a
+    // grace window after contact flickers you STILL travel with it — the
+    // platform can never slide out from under you between grabs. Only after
+    // you've truly left it (grace expired) do you inherit its momentum.
+    if (ride) {
+      rig.position.add(ride.delta);
+      rideMover = ride;
+      rideGrace = 0.25;
+    } else if (rideMover) {
+      rideGrace -= dt;
+      if (rideGrace > 0) {
+        rig.position.add(rideMover.delta); // still riding through the flicker
+      } else {
+        if (velocity.length() >= 3) {
+          velocity.addScaledVector(rideMover.delta, 0.9 / Math.max(dt, 1 / 120)); // carry its speed with you
+        }
+        rideMover = null;
+      }
     }
     // head hitbox — your face can't clip through blocks anymore
     camera.getWorldPosition(_headW);
