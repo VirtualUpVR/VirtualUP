@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP</title>
+<title>VirtualUP — Gorilla Climb</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -1039,6 +1039,18 @@
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
   }
   let masterVolume = 1; // adjustable in the Y-button settings menu
+  // settings persist between play sessions (localStorage; silently skipped if unavailable)
+  function saveSettings() {
+    try { localStorage.setItem('virtualup-settings', JSON.stringify({ volume: masterVolume })); } catch (e) {}
+  }
+  (function loadSettings() {
+    try {
+      const s = JSON.parse(localStorage.getItem('virtualup-settings'));
+      if (s && typeof s.volume === 'number' && (s.volume === 1000 || (s.volume >= 0 && s.volume <= 1))) {
+        masterVolume = s.volume;
+      }
+    } catch (e) {}
+  })();
   function playHit(strength) {
     if (!audioCtx || audioCtx.state !== 'running') return;
     const t = audioCtx.currentTime;
@@ -1289,142 +1301,8 @@
       if (!paused) togglePause(); // opening settings pauses the game
     } else {
       camera.remove(setPanel);
-      if (masterVolume === 1000) { openWarning(); return; } // remain paused — the red screen takes over
+      saveSettings();             // remember the volume for next time
       if (paused) togglePause();  // closing resumes it
-    }
-  }
-
-  // ---------- the 1,000 volume warning ----------
-  // Close settings at 1,000 and the game STAYS paused, the screen turns red,
-  // and this appears. Point with the laser from your cube hands and pull trigger:
-  //   Continue  — HOLD for 5 full seconds to accept 1,000 volume and play
-  //   Nevermind — a single press, straight back to settings
-  let warningOpen = false;
-  let holdT = 0;
-  let lastHover = -1, lastProg = -1;
-  const trigWas = [false, false];
-  const raycaster = new THREE.Raycaster();
-  const _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3(), _rayQ = new THREE.Quaternion();
-  const BTN_CONT = { x: 90, y: 430, w: 380, h: 150 };
-  const BTN_NVM  = { x: 554, y: 430, w: 380, h: 150 };
-
-  const warnCvs = document.createElement('canvas');
-  warnCvs.width = 1024; warnCvs.height = 640;
-  const warnCtx = warnCvs.getContext('2d');
-  const warnTex = new THREE.CanvasTexture(warnCvs);
-  const warnPanel = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.3, 0.8125),
-    new THREE.MeshBasicMaterial({ map: warnTex, depthTest: false })
-  );
-  warnPanel.renderOrder = 1003;
-  warnPanel.position.set(0, -0.02, -1.4);
-
-  // the red screen tint
-  const redMat = new THREE.MeshBasicMaterial({
-    color: 0xaa0000, side: THREE.BackSide, transparent: true, opacity: 0.45, depthTest: false
-  });
-  const redSphere = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12), redMat);
-  redSphere.renderOrder = 1000;
-  redSphere.frustumCulled = false;
-
-  // laser pointers for the cube hands
-  controllers.forEach(h => {
-    h.laser = new THREE.Mesh(
-      new THREE.BoxGeometry(0.006, 0.006, 3.0),
-      new THREE.MeshBasicMaterial({ color: 0xff4444, depthTest: false })
-    );
-    h.laser.position.z = -1.5;
-    h.laser.renderOrder = 1004;
-  });
-
-  function drawWarning(hover, progress) {
-    const g = warnCtx;
-    g.fillStyle = '#2a0606'; g.fillRect(0, 0, 1024, 640);
-    g.strokeStyle = '#ff3b3b'; g.lineWidth = 10; g.strokeRect(10, 10, 1004, 620);
-    g.textAlign = 'center';
-    g.fillStyle = '#ffdddd'; g.font = 'bold 42px Trebuchet MS';
-    g.fillText('Hey, you have set your volume to the', 512, 105);
-    g.fillText('option 1,000. This option is really,', 512, 165);
-    g.fillStyle = '#ff5a5a';
-    g.fillText('REALLY loud.', 512, 225);
-    g.fillStyle = '#ffdddd'; g.font = 'bold 46px Trebuchet MS';
-    g.fillText('Are You Sure You Want To Do This?', 512, 330);
-    // Continue (hold 5s)
-    g.fillStyle = '#3a0a0a'; g.fillRect(BTN_CONT.x, BTN_CONT.y, BTN_CONT.w, BTN_CONT.h);
-    if (progress > 0) { g.fillStyle = '#a01818'; g.fillRect(BTN_CONT.x, BTN_CONT.y, BTN_CONT.w * Math.min(progress, 1), BTN_CONT.h); }
-    g.strokeStyle = hover === 1 ? '#ffd23f' : '#ff8080'; g.lineWidth = hover === 1 ? 8 : 4;
-    g.strokeRect(BTN_CONT.x, BTN_CONT.y, BTN_CONT.w, BTN_CONT.h);
-    g.fillStyle = '#ffffff'; g.font = 'bold 44px Trebuchet MS';
-    g.fillText('Continue', BTN_CONT.x + BTN_CONT.w / 2, BTN_CONT.y + 78);
-    g.font = '24px Trebuchet MS'; g.fillStyle = '#ffb0b0';
-    g.fillText('hold trigger for 5 seconds', BTN_CONT.x + BTN_CONT.w / 2, BTN_CONT.y + 120);
-    // Nevermind (single press)
-    g.fillStyle = '#123c26'; g.fillRect(BTN_NVM.x, BTN_NVM.y, BTN_NVM.w, BTN_NVM.h);
-    g.strokeStyle = hover === 2 ? '#ffd23f' : '#6fae7f'; g.lineWidth = hover === 2 ? 8 : 4;
-    g.strokeRect(BTN_NVM.x, BTN_NVM.y, BTN_NVM.w, BTN_NVM.h);
-    g.fillStyle = '#ffffff'; g.font = 'bold 44px Trebuchet MS';
-    g.fillText('Nevermind', BTN_NVM.x + BTN_NVM.w / 2, BTN_NVM.y + 90);
-    warnTex.needsUpdate = true;
-  }
-
-  function openWarning() {
-    warningOpen = true;
-    holdT = 0; lastHover = -1; lastProg = -1;
-    camera.add(redSphere);
-    camera.add(warnPanel);
-    controllers.forEach(h => h.ctrl.add(h.laser)); // lasers on the cube hands
-    drawWarning(0, 0);
-  }
-  function closeWarning(backToSettings) {
-    warningOpen = false;
-    camera.remove(redSphere);
-    camera.remove(warnPanel);
-    controllers.forEach(h => h.ctrl.remove(h.laser));
-    if (backToSettings) {
-      settingsOpen = true;
-      drawSettings();
-      camera.add(setPanel);       // back to settings, still paused
-    } else if (paused) {
-      togglePause();              // 1,000 accepted — back to the game
-    }
-  }
-
-  function updateWarning(dt) {
-    const session = renderer.xr.getSession && renderer.xr.getSession();
-    if (!session || !session.inputSources) return;
-    let hover = 0;
-    let holdingContinue = false;
-    for (let i = 0; i < controllers.length; i++) {
-      const src = session.inputSources[i];
-      const gp = src && src.gamepad;
-      const trig = !!(gp && gp.buttons && gp.buttons[0] && gp.buttons[0].pressed);
-      const ctrl = controllers[i].ctrl;
-      ctrl.getWorldPosition(_rayO);
-      ctrl.getWorldQuaternion(_rayQ);
-      _rayD.set(0, 0, -1).applyQuaternion(_rayQ);
-      raycaster.set(_rayO, _rayD);
-      const hit = raycaster.intersectObject(warnPanel, false)[0];
-      if (hit && hit.uv) {
-        const cx = hit.uv.x * 1024, cy = (1 - hit.uv.y) * 640;
-        let btn = 0;
-        if (cx > BTN_CONT.x && cx < BTN_CONT.x + BTN_CONT.w && cy > BTN_CONT.y && cy < BTN_CONT.y + BTN_CONT.h) btn = 1;
-        else if (cx > BTN_NVM.x && cx < BTN_NVM.x + BTN_NVM.w && cy > BTN_NVM.y && cy < BTN_NVM.y + BTN_NVM.h) btn = 2;
-        if (btn) hover = btn;
-        if (btn === 2 && trig && !trigWas[i]) { trigWas[i] = trig; closeWarning(true); return; } // Nevermind: one press
-        if (btn === 1 && trig) holdingContinue = true;                                            // Continue: keep holding
-      }
-      trigWas[i] = trig;
-    }
-    if (holdingContinue) {
-      holdT += dt;
-      if (holdT >= 5) { closeWarning(false); return; } // 5 full seconds — 1,000 volume is yours
-    } else {
-      holdT = 0;
-    }
-    const prog = Math.round((holdT / 5) * 50) / 50;
-    if (hover !== lastHover || prog !== lastProg) {
-      drawWarning(hover, holdT / 5);
-      lastHover = hover; lastProg = prog;
     }
   }
 
@@ -1448,7 +1326,6 @@
     }
   }
   function pollPauseButtons() {
-    if (warningOpen) { yWas = true; bWas = true; return; } // the red screen owns all input
     const session = renderer.xr.getSession && renderer.xr.getSession();
     if (!session || !session.inputSources) return;
     let y = false, b = false, stickX = 0;
@@ -1476,6 +1353,7 @@
           else masterVolume = Math.max(0, Math.round((masterVolume - 0.1) * 10) / 10);
         }
         drawSettings();
+        saveSettings();
         if (masterVolume !== 1000) playHit(2); // 1,000 never previews
         stickCentered = false;
       } else if (Math.abs(stickX) < 0.3) {
@@ -1490,7 +1368,6 @@
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (renderer.xr.isPresenting) pollPauseButtons();
-    if (renderer.xr.isPresenting && warningOpen) updateWarning(dt);
     if (!paused) {
       gameT += dt;
       updateMovers(gameT);
@@ -1537,9 +1414,19 @@
         camera.position.set(0, 0, 0); // hand control back to the headset
         startPage.style.display = 'none';
         showSplash();
+        // Meta menu opens -> auto-pause. Menu closes -> resume with hand history
+        // wiped, so exiting the menu can never fling you off the map.
+        let autoPaused = false;
+        session.addEventListener('visibilitychange', () => {
+          if (session.visibilityState !== 'visible') {
+            if (!paused) { autoPaused = true; togglePause(); }
+          } else {
+            controllers.forEach(c => { c.prev = null; c.wasTouching = false; });
+            if (autoPaused) { autoPaused = false; togglePause(); }
+          }
+        });
         session.addEventListener('end', () => {
-          if (warningOpen) closeWarning(false);
-          else if (settingsOpen) setSettings(false);
+          if (settingsOpen) setSettings(false);
           else if (paused) togglePause(); // clean up cube hands
           controllers.forEach(c => c.prev = null);
           startPage.style.display = 'flex'; // back to the white page
