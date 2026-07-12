@@ -700,13 +700,37 @@
   const ARM_SCALE = 1.5; // gorilla arms: hand reach is amplified from the head, like Gorilla Tag
   const handGeo = new THREE.SphereGeometry(HAND_R, 12, 10);
   const handMat = new THREE.MeshLambertMaterial({ color: 0x3b2a1e });
+  // a stylized Meta Touch controller, shown only while paused
+  function makeControllerModel() {
+    const white = new THREE.MeshLambertMaterial({ color: 0xe9e9ee });
+    const dark = new THREE.MeshLambertMaterial({ color: 0x2b2b30 });
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.021, 0.11, 10), white);
+    body.rotation.x = 1.0; body.position.set(0, -0.02, 0.03);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.042, 0.009, 8, 20), white);
+    ring.rotation.x = Math.PI / 2 - 0.4; ring.position.set(0, 0.015, -0.015);
+    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.012, 12), dark);
+    face.rotation.x = 0.35; face.position.set(0, 0.02, 0.012);
+    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.016, 8), dark);
+    stick.rotation.x = 0.35; stick.position.set(-0.011, 0.032, 0.008);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.01, 8, 6), dark);
+    cap.position.set(-0.011, 0.04, 0.005);
+    const b1 = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.008, 8), dark);
+    b1.rotation.x = 0.35; b1.position.set(0.012, 0.028, 0.014);
+    const b2 = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.008, 8), dark);
+    b2.rotation.x = 0.35; b2.position.set(0.014, 0.025, 0.026);
+    g.add(body, ring, face, stick, cap, b1, b2);
+    return g;
+  }
+
   const controllers = [];
   for (let i = 0; i < 2; i++) {
     const c = renderer.xr.getController(i);
     rig.add(c);
     const ball = new THREE.Mesh(handGeo, handMat);
     rig.add(ball);
-    controllers.push({ ctrl: c, ball: ball, prev: null, wasTouching: false, offTime: 1, cool: 0 });
+    controllers.push({ ctrl: c, ball: ball, model: makeControllerModel(),
+                       prev: null, wasTouching: false, offTime: 1, cool: 0 });
   }
 
   // ---------- physics helpers ----------
@@ -1027,31 +1051,65 @@
     respawnIfFallen();
   }
 
+  // ---------- pause (Y or B button) ----------
+  // Everything freezes: your body, the ball hands, movers, decor — all locked
+  // where they were. Your real hands show as Meta controllers that keep moving.
+  // Unpause and the controllers vanish, the ball hands take over again.
+  let paused = false;
+  let pauseBtnWas = false;
+  function togglePause() {
+    paused = !paused;
+    for (const h of controllers) {
+      if (paused) h.ctrl.add(h.model);      // controllers appear in your hands
+      else h.ctrl.remove(h.model);          // deleted — ball hands resume
+    }
+    if (!paused) {
+      // wipe stale hand history so unpausing can't fling you
+      controllers.forEach(c => { c.prev = null; c.wasTouching = false; });
+    }
+  }
+  function pollPauseButtons() {
+    const session = renderer.xr.getSession && renderer.xr.getSession();
+    if (!session || !session.inputSources) return;
+    let pressed = false;
+    for (const src of session.inputSources) {
+      const gp = src.gamepad;
+      // buttons[5] is Y on the left controller, B on the right
+      if (gp && gp.buttons && gp.buttons.length > 5 && gp.buttons[5].pressed) pressed = true;
+    }
+    if (pressed && !pauseBtnWas) togglePause();
+    pauseBtnWas = pressed;
+  }
+
   // ---------- main loop ----------
   const clock = new THREE.Clock();
+  let gameT = 0; // game time stands still while paused, so movers resume exactly where they froze
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
-    const t = clock.elapsedTime;
-    updateMovers(t);
-    checkShipTrigger();
-    updateTeleport(dt);
-    // the space look belongs to the space map
-    const sfTarget = inSpace ? 1 : 0;
-    spaceF += (sfTarget - spaceF) * Math.min(dt * 2.5, 1);
-    if (Math.abs(spaceF - lastSpaceF) > 0.003) { applySpace(spaceF); lastSpaceF = spaceF; }
-    if (renderer.xr.isPresenting && !tp) updateVR(dt);
-    else if (renderer.xr.isPresenting) { /* frozen during the blackout */ }
-    else if (flat && !tp) updateFlat(dt);
-    // gentle bobbing of the floating decor
-    for (const f of floaters) {
-      f.m.position.y = f.base + Math.sin(t * f.sp + f.ph) * 0.4;
-      f.m.rotation.y += dt * 0.05;
-    }
-    // splash fade-out
-    if (splashT > 0) {
-      splashT -= dt;
-      if (splashT < 1.2) splashMat.opacity = Math.max(splashT / 1.2, 0);
-      if (splashT <= 0) camera.remove(splash);
+    if (renderer.xr.isPresenting) pollPauseButtons();
+    if (!paused) {
+      gameT += dt;
+      updateMovers(gameT);
+      checkShipTrigger();
+      updateTeleport(dt);
+      // the space look belongs to the space map
+      const sfTarget = inSpace ? 1 : 0;
+      spaceF += (sfTarget - spaceF) * Math.min(dt * 2.5, 1);
+      if (Math.abs(spaceF - lastSpaceF) > 0.003) { applySpace(spaceF); lastSpaceF = spaceF; }
+      if (renderer.xr.isPresenting && !tp) updateVR(dt);
+      else if (renderer.xr.isPresenting) { /* frozen during the blackout */ }
+      else if (flat && !tp) updateFlat(dt);
+      // gentle bobbing of the floating decor
+      for (const f of floaters) {
+        f.m.position.y = f.base + Math.sin(gameT * f.sp + f.ph) * 0.4;
+        f.m.rotation.y += dt * 0.05;
+      }
+      // splash fade-out
+      if (splashT > 0) {
+        splashT -= dt;
+        if (splashT < 1.2) splashMat.opacity = Math.max(splashT / 1.2, 0);
+        if (splashT <= 0) camera.remove(splash);
+      }
     }
     renderer.render(scene, camera);
   });
@@ -1080,6 +1138,7 @@
         showSplash();
         session.addEventListener('end', () => {
           document.getElementById('overlay').style.display = 'flex';
+          if (paused) togglePause(); // clean up controller models
           controllers.forEach(c => c.prev = null);
         });
       })
