@@ -128,10 +128,12 @@
   const pillar = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 3.2, 13, 10), matRock2);
   pillar.position.set(0, 6.5, 0);
   scene.add(pillar);
-  colliders.push({
-    min: new THREE.Vector3(-2.1, 0, -2.1),
-    max: new THREE.Vector3(2.1, 13, 2.1)
-  });
+  // pillar collision is a true tapered cylinder — matches exactly what you see
+  const PILLAR = { y0: 0, y1: 13, r0: 3.2, r1: 2.4 };
+  function pillarRadiusAt(y) {
+    const t = Math.max(0, Math.min(1, (y - PILLAR.y0) / (PILLAR.y1 - PILLAR.y0)));
+    return PILLAR.r0 + (PILLAR.r1 - PILLAR.r0) * t;
+  }
 
   let px = 0, pz = 0, py = 1.0, heading = 0;
   const pathPts = [];
@@ -334,6 +336,31 @@
   const _cp = new THREE.Vector3();
   const _n = new THREE.Vector3();
   function sphereHit(worldPos, r) {
+    // round pillar (exact cylinder, no square corners)
+    if (worldPos.y > PILLAR.y0 - r && worldPos.y < PILLAR.y1 + r) {
+      const cy = Math.max(PILLAR.y0, Math.min(worldPos.y, PILLAR.y1));
+      const pr = pillarRadiusAt(cy);
+      const dr = Math.hypot(worldPos.x, worldPos.z);
+      if (dr > pr) {
+        // outside the surface: closest point is on the wall (or its rim)
+        _cp.set(worldPos.x / dr * pr, cy, worldPos.z / dr * pr);
+        _n.subVectors(worldPos, _cp);
+        const d = _n.length();
+        if (d < r) {
+          _n.divideScalar(d || 1);
+          return { normal: _n.clone(), depth: r - d };
+        }
+      } else if (worldPos.y > PILLAR.y1) {
+        // above the top cap, within its radius
+        const d = worldPos.y - PILLAR.y1;
+        if (d < r) return { normal: new THREE.Vector3(0, 1, 0), depth: r - d };
+      } else {
+        // inside the stone: push straight out
+        const nd = dr || 1e-4;
+        _n.set(worldPos.x / nd, 0, worldPos.z / nd);
+        return { normal: _n.clone(), depth: (pr - dr) + r };
+      }
+    }
     for (let i = 0; i < colliders.length; i++) {
       closestPointOnBox(worldPos, colliders[i], _cp);
       _n.subVectors(worldPos, _cp);
@@ -560,15 +587,14 @@
         }
       }
     }
-    // simple horizontal block against the pillar core
-    const core = colliders[3];
-    if (p.y < core.max.y &&
-        p.x > core.min.x - 0.3 && p.x < core.max.x + 0.3 &&
-        p.z > core.min.z - 0.3 && p.z < core.max.z + 0.3 && !grounded) {
-      const dx = Math.min(p.x - (core.min.x - 0.3), (core.max.x + 0.3) - p.x);
-      const dz = Math.min(p.z - (core.min.z - 0.3), (core.max.z + 0.3) - p.z);
-      if (dx < dz) p.x = (p.x < 0) ? core.min.x - 0.3 : core.max.x + 0.3;
-      else p.z = (p.z < 0) ? core.min.z - 0.3 : core.max.z + 0.3;
+    // keep the player outside the round pillar (flat/phone mode)
+    if (p.y < PILLAR.y1 && !grounded) {
+      const pr = pillarRadiusAt(p.y) + 0.3;
+      const dr = Math.hypot(p.x, p.z);
+      if (dr < pr) {
+        const s = pr / (dr || 1e-4);
+        p.x *= s; p.z *= s;
+      }
     }
     respawnIfFallen();
   }
