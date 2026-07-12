@@ -7,51 +7,19 @@
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
-  #overlay {
-    position: fixed; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 18px;
-    background: radial-gradient(ellipse at 50% 30%, #14382a 0%, #071710 70%);
-    color: #eaf5ec; font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
-    text-align: center; z-index: 10; padding: 24px;
+  #startpage {
+    position: fixed; inset: 0; z-index: 10; background: #ffffff;
+    display: flex; align-items: center; justify-content: center;
   }
-  #overlay h1 { font-size: clamp(40px, 9vw, 88px); margin: 0; letter-spacing: 4px;
-    color: #ffd23f; text-shadow: 0 4px 0 #7a5c00, 0 8px 24px rgba(0,0,0,.6); }
-  #overlay p { max-width: 520px; line-height: 1.5; margin: 0; font-size: 16px; color: #bfe3c8; }
-  #vrbtn, #flatbtn, #mobilebtn {
-    font-family: inherit; font-size: 20px; font-weight: bold; letter-spacing: 1px;
-    padding: 14px 42px; border-radius: 999px; border: 3px solid #ffd23f;
-    background: #1e5c3a; color: #ffd23f; cursor: pointer;
+  #startvr {
+    font: bold 28px Arial, sans-serif; color: #000; background: #fff;
+    border: 2px solid #000; border-radius: 8px; padding: 18px 48px; cursor: pointer;
   }
-  #vrbtn:disabled { opacity: .4; border-color: #557; color: #99a; background: #223; cursor: not-allowed; }
-  #flatbtn, #mobilebtn { border-color: #6fae7f; color: #d8f0dd; background: transparent; font-size: 15px; padding: 10px 28px; }
-  #mobilebtn { display: none; border-color: #ffd23f; color: #ffd23f; }
-  #hint { position: fixed; left: 12px; bottom: 12px; color: #cfe9d4; z-index: 5;
-    font-family: 'Trebuchet MS', sans-serif; font-size: 13px; background: rgba(7,23,16,.65);
-    padding: 8px 12px; border-radius: 8px; display: none; }
-  #touchui { display: none; }
-  #stick { position: fixed; left: 22px; bottom: 26px; width: 120px; height: 120px; border-radius: 50%;
-    border: 2px solid rgba(255,255,255,.5); background: rgba(255,255,255,.08); z-index: 6; touch-action: none; }
-  #knob { position: absolute; left: 40px; top: 40px; width: 40px; height: 40px; border-radius: 50%;
-    background: rgba(255,255,255,.55); pointer-events: none; }
-  #jumpbtn { position: fixed; right: 22px; bottom: 40px; width: 92px; height: 92px; border-radius: 50%;
-    border: 3px solid #ffd23f; background: rgba(30,92,58,.8); color: #ffd23f;
-    font-family: 'Trebuchet MS', sans-serif; font-weight: bold; font-size: 18px; z-index: 6; touch-action: none; }
+  #startvr:active { background: #eee; }
 </style>
 </head>
 <body>
-<div id="overlay">
-  <h1>VirtualUP</h1>
-  <p><b>Gorilla-style climbing, only up.</b> Push off surfaces with your hands to move — no buttons, no sticks. Climb the 10-brick tower, then survive 55 unique floating levels — switchbacks, spirals, tightropes, walls, treetops, and moving platforms that slide, bob, and orbit. 150 levels. 1–14 climb the jungle sky — then a spaceship carries you to a second map floating in space with 136 structurally unique levels: monkey bars, chimneys, ferries, pyramids, mazes, tightropes, pistons, and more. No two levels play the same.</p>
-  <button id="vrbtn" disabled>CHECKING VR…</button>
-  <button id="mobilebtn">Fly the map on your phone — move phone to look</button>
-  <button id="flatbtn">Preview on flat screen</button>
-  <p style="font-size:13px;color:#7fae8c">On Quest 3S: open this page in the headset's browser, then press ENTER VR.</p>
-</div>
-<div id="hint">WASD move · mouse look · SPACE jump · fall = restart</div>
-<div id="touchui">
-  <div id="stick"><div id="knob"></div></div>
-  <button id="jumpbtn">JUMP</button>
-</div>
+<div id="startpage"><button id="startvr">Start VR</button></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin="anonymous"></script>
 <script>
 (function () {
@@ -1279,195 +1247,6 @@
     respawnIfFallen();
   }
 
-  // ---------- flat-screen + phone mode ----------
-  let flat = false;
-  let mobile = false;
-  let yaw = 0, pitch = 0;
-  const keys = {};
-  const EYE = 1.55;
-  const UP = new THREE.Vector3(0, 1, 0);
-
-  function startFlat() {
-    initAudio();
-    flat = true;
-    document.getElementById('overlay').style.display = 'none';
-    document.getElementById('hint').style.display = 'block';
-    camera.position.set(0, EYE, 0);
-    renderer.domElement.addEventListener('click', () => renderer.domElement.requestPointerLock());
-    document.addEventListener('mousemove', e => {
-      if (document.pointerLockElement !== renderer.domElement) return;
-      yaw -= e.movementX * 0.0024;
-      pitch = Math.max(-1.45, Math.min(1.45, pitch - e.movementY * 0.0024));
-    });
-    document.addEventListener('keydown', e => keys[e.code] = true);
-    document.addEventListener('keyup', e => keys[e.code] = false);
-  }
-
-  // --- phone: gyroscope look ---
-  let orientData = null;
-  let hasGyro = false;
-  const _zee = new THREE.Vector3(0, 0, 1);
-  const _euler = new THREE.Euler();
-  const _q0 = new THREE.Quaternion();
-  const _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
-  function gyroQuaternion(quat, alpha, beta, gamma, orient) {
-    _euler.set(beta, alpha, -gamma, 'YXZ');
-    quat.setFromEuler(_euler);
-    quat.multiply(_q1);
-    quat.multiply(_q0.setFromAxisAngle(_zee, -orient));
-  }
-  function updateDeviceLook() {
-    if (orientData && orientData.alpha !== null) {
-      hasGyro = true;
-      const a = THREE.MathUtils.degToRad(orientData.alpha);
-      const b = THREE.MathUtils.degToRad(orientData.beta);
-      const g = THREE.MathUtils.degToRad(orientData.gamma);
-      const o = THREE.MathUtils.degToRad(
-        (screen.orientation && screen.orientation.angle) || window.orientation || 0);
-      gyroQuaternion(camera.quaternion, a, b, g, o);
-    } else {
-      // no gyro permission: fall back to swipe-to-look
-      camera.rotation.set(pitch, yaw, 0, 'YXZ');
-    }
-  }
-
-  function startMobile() {
-    initAudio();
-    const go = () => {
-      mobile = true; flat = true;
-      document.getElementById('overlay').style.display = 'none';
-      document.getElementById('touchui').style.display = 'block';
-      document.getElementById('jumpbtn').textContent = 'UP';
-      camera.position.set(0, EYE, 0);
-      window.addEventListener('deviceorientation', e => { orientData = e; });
-    };
-    // iOS requires an explicit permission prompt for motion sensors
-    if (typeof DeviceOrientationEvent !== 'undefined' &&
-        typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DeviceOrientationEvent.requestPermission().then(go).catch(go);
-    } else { go(); }
-  }
-
-  // --- phone: joystick + jump + swipe-look fallback ---
-  const joy = { x: 0, y: 0 };
-  let jumpHeld = false;
-  {
-    const stick = document.getElementById('stick');
-    const knob = document.getElementById('knob');
-    let joyId = null, ox = 0, oy = 0;
-    stick.addEventListener('touchstart', e => {
-      const t = e.changedTouches[0];
-      joyId = t.identifier; ox = t.clientX; oy = t.clientY;
-      e.preventDefault();
-    }, { passive: false });
-    stick.addEventListener('touchmove', e => {
-      for (const t of e.changedTouches) {
-        if (t.identifier !== joyId) continue;
-        let dx = (t.clientX - ox) / 45, dy = (t.clientY - oy) / 45;
-        const len = Math.hypot(dx, dy);
-        if (len > 1) { dx /= len; dy /= len; }
-        joy.x = dx; joy.y = -dy;
-        knob.style.transform = 'translate(' + (dx * 35) + 'px,' + (dy * 35) + 'px)';
-      }
-      e.preventDefault();
-    }, { passive: false });
-    const endJoy = e => {
-      for (const t of e.changedTouches) {
-        if (t.identifier !== joyId) continue;
-        joyId = null; joy.x = 0; joy.y = 0; knob.style.transform = '';
-      }
-    };
-    stick.addEventListener('touchend', endJoy);
-    stick.addEventListener('touchcancel', endJoy);
-
-    const jb = document.getElementById('jumpbtn');
-    jb.addEventListener('touchstart', e => { jumpHeld = true; e.preventDefault(); }, { passive: false });
-    jb.addEventListener('touchend', () => { jumpHeld = false; });
-    jb.addEventListener('touchcancel', () => { jumpHeld = false; });
-
-    // swipe-to-look on the rest of the screen (used when gyro is unavailable)
-    let lookId = null, lx = 0, ly = 0;
-    renderer.domElement.addEventListener('touchstart', e => {
-      if (!mobile || hasGyro) return;
-      const t = e.changedTouches[0];
-      lookId = t.identifier; lx = t.clientX; ly = t.clientY;
-    });
-    renderer.domElement.addEventListener('touchmove', e => {
-      if (!mobile || hasGyro) return;
-      for (const t of e.changedTouches) {
-        if (t.identifier !== lookId) continue;
-        yaw -= (t.clientX - lx) * 0.005;
-        pitch = Math.max(-1.45, Math.min(1.45, pitch - (t.clientY - ly) * 0.005));
-        lx = t.clientX; ly = t.clientY;
-      }
-    });
-  }
-
-  let grounded = false;
-  const _fwd = new THREE.Vector3();
-  const _rgt = new THREE.Vector3();
-  function updateFlat(dt) {
-    const move = new THREE.Vector3();
-    let wantJump = false;
-    if (mobile) {
-      // phone mode is a free-fly explorer: no gravity, no falling, just cruise the map
-      updateDeviceLook();
-      _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion); // full 3D: aim the phone up to fly up
-      if (_fwd.lengthSq() < 1e-4) _fwd.set(0, 0, -1);
-      _fwd.normalize();
-      _rgt.crossVectors(_fwd, UP);
-      if (_rgt.lengthSq() < 1e-4) _rgt.set(1, 0, 0);
-      _rgt.normalize();
-      move.addScaledVector(_fwd, joy.y).addScaledVector(_rgt, joy.x);
-      if (move.lengthSq() > 1) move.normalize();
-      move.multiplyScalar(9);
-      if (jumpHeld) move.y += 5; // UP button climbs
-      rig.position.addScaledVector(move, dt);
-      return;
-    }
-    {
-      camera.rotation.set(pitch, yaw, 0, 'YXZ');
-      const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-      const r = new THREE.Vector3(f.z, 0, -f.x);
-      if (keys['KeyW']) move.add(f);
-      if (keys['KeyS']) move.sub(f);
-      if (keys['KeyD']) move.sub(r);
-      if (keys['KeyA']) move.add(r);
-      if (move.lengthSq() > 0) move.normalize().multiplyScalar(4.2);
-      wantJump = keys['Space'];
-    }
-    velocity.x = move.x; velocity.z = move.z;
-    if (wantJump && grounded) { velocity.y = 5.4; grounded = false; }
-    velocity.y -= grav() * dt;
-    rig.position.addScaledVector(velocity, dt);
-
-    // land on tops
-    const fallSpeed = -velocity.y;
-    const wasGrounded = grounded;
-    grounded = false;
-    const p = rig.position;
-    for (const b of colliders) {
-      if (p.x > b.min.x - 0.2 && p.x < b.max.x + 0.2 && p.z > b.min.z - 0.2 && p.z < b.max.z + 0.2) {
-        if (velocity.y <= 0 && p.y >= b.max.y - 0.35 && p.y <= b.max.y + 0.05) {
-          p.y = b.max.y; velocity.y = 0;
-          if (!wasGrounded && fallSpeed > 3) playHit(Math.min(fallSpeed * 0.6, 4));
-          if (b.mover) { p.x += b.mover.delta.x; p.z += b.mover.delta.z; }
-          grounded = true;
-        }
-      }
-    }
-    // keep the player outside the round pillar (flat/phone mode)
-    if (p.y < PILLAR.y1 && !grounded) {
-      const pr = pillarRadiusAt(p.y) + 0.3;
-      const dr = Math.hypot(p.x, p.z);
-      if (dr < pr) {
-        const s = pr / (dr || 1e-4);
-        p.x *= s; p.z *= s;
-      }
-    }
-    respawnIfFallen();
-  }
-
   // ---------- settings menu (Y button) ----------
   // Y opens SETTINGS — the game pauses while it's open. Adjust Sound Volume
   // with the thumbstick. Y (or B) closes it and resumes. B alone is plain pause.
@@ -1569,15 +1348,20 @@
     if (!paused) {
       gameT += dt;
       updateMovers(gameT);
-      checkShipTrigger();
       updateTeleport(dt);
       // the space look belongs to the space map
       const sfTarget = inSpace ? 1 : 0;
       spaceF += (sfTarget - spaceF) * Math.min(dt * 2.5, 1);
       if (Math.abs(spaceF - lastSpaceF) > 0.003) { applySpace(spaceF); lastSpaceF = spaceF; }
-      if (renderer.xr.isPresenting && !tp) updateVR(dt);
-      else if (renderer.xr.isPresenting) { /* frozen during the blackout */ }
-      else if (flat && !tp) updateFlat(dt);
+      if (renderer.xr.isPresenting && !tp) { checkShipTrigger(); updateVR(dt); }
+      else if (!renderer.xr.isPresenting) {
+        // no menus, no modes: while waiting for VR, the camera slowly circles the tower
+        const a = gameT * 0.06;
+        camera.position.set(Math.cos(a) * 13 - rig.position.x,
+                            6 - rig.position.y,
+                            Math.sin(a) * 13 - rig.position.z);
+        camera.lookAt(0, 5, 0);
+      }
       // gentle bobbing of the floating decor
       for (const f of floaters) {
         f.m.position.y = f.base + Math.sin(gameT * f.sp + f.ph) * 0.4;
@@ -1593,44 +1377,29 @@
     renderer.render(scene, camera);
   });
 
-  // ---------- VR entry ----------
-  const vrbtn = document.getElementById('vrbtn');
-  if (navigator.xr) {
-    navigator.xr.isSessionSupported('immersive-vr').then(ok => {
-      if (ok) {
-        vrbtn.disabled = false;
-        vrbtn.textContent = 'ENTER VR';
-      } else {
-        vrbtn.textContent = 'VR NOT AVAILABLE HERE';
-      }
-    }).catch(() => vrbtn.textContent = 'VR NOT AVAILABLE HERE');
-  } else {
-    vrbtn.textContent = 'VR NOT AVAILABLE HERE';
-  }
-  vrbtn.addEventListener('click', () => {
-    initAudio();
+  // ---------- start page ----------
+  // A plain white page with one button. Click Start VR and you're in.
+  const startPage = document.getElementById('startpage');
+  const startBtn = document.getElementById('startvr');
+  startBtn.addEventListener('click', () => {
+    if (!navigator.xr) { startBtn.textContent = 'VR not available on this device'; return; }
     navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
       .then(session => {
+        initAudio();
         renderer.xr.setReferenceSpaceType('local-floor');
         renderer.xr.setSession(session);
-        document.getElementById('overlay').style.display = 'none';
+        camera.position.set(0, 0, 0); // hand control back to the headset
+        startPage.style.display = 'none';
         showSplash();
         session.addEventListener('end', () => {
-          document.getElementById('overlay').style.display = 'flex';
           if (settingsOpen) setSettings(false);
           else if (paused) togglePause(); // clean up cube hands
           controllers.forEach(c => c.prev = null);
+          startPage.style.display = 'flex'; // back to the white page
         });
       })
-      .catch(err => { vrbtn.textContent = 'VR BLOCKED — OPEN IN NEW TAB'; console.error(err); });
+      .catch(() => { startBtn.textContent = 'VR not available on this device'; });
   });
-  document.getElementById('flatbtn').addEventListener('click', startFlat);
-
-  const mobilebtn = document.getElementById('mobilebtn');
-  if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-    mobilebtn.style.display = 'inline-block';
-  }
-  mobilebtn.addEventListener('click', startMobile);
 })();
 </script>
 </body>
