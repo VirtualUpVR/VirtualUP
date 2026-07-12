@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP</title>
+<title>VirtualUP — Gorilla Climb</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -1247,10 +1247,23 @@
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
   }
+  let hapticsOn = true; // togglable in settings
+  // controller rumble — same feel rules as the hit sounds
+  function pulseHaptic(i, strength) {
+    if (!hapticsOn) return;
+    const session = renderer.xr.getSession && renderer.xr.getSession();
+    if (!session || !session.inputSources || !session.inputSources[i]) return;
+    const gp = session.inputSources[i].gamepad;
+    const act = gp && gp.hapticActuators && gp.hapticActuators[0];
+    if (act && act.pulse) {
+      act.pulse(Math.min(0.2 + strength * 0.2, 1), 40 + strength * 25); // harder hit = stronger, longer buzz
+    }
+  }
+
   let masterVolume = 1; // adjustable in the Y-button settings menu
   // settings persist between play sessions (localStorage; silently skipped if unavailable)
   function saveSettings() {
-    try { localStorage.setItem('virtualup-settings', JSON.stringify({ volume: masterVolume })); } catch (e) {}
+    try { localStorage.setItem('virtualup-settings', JSON.stringify({ volume: masterVolume, haptics: hapticsOn })); } catch (e) {}
   }
   (function loadSettings() {
     try {
@@ -1258,6 +1271,7 @@
       if (s && typeof s.volume === 'number' && (s.volume === 1000 || (s.volume >= 0 && s.volume <= 1))) {
         masterVolume = s.volume;
       }
+      if (s && typeof s.haptics === 'boolean') hapticsOn = s.haptics;
     } catch (e) {}
   })();
   function playHit(strength) {
@@ -1416,7 +1430,8 @@
     _delta.set(0, 0, 0);
     _push.set(0, 0, 0);
 
-    for (const h of controllers) {
+    for (let ci = 0; ci < controllers.length; ci++) {
+      const h = controllers[ci];
       // gorilla arms: stretch the hand outward from the head so knuckles reach the ground
       _local.copy(h.ctrl.position).sub(camera.position).multiplyScalar(ARM_SCALE).add(camera.position);
       h.ball.position.copy(_local);
@@ -1431,6 +1446,7 @@
         // cooldown must be over (caps the rate), and the hand must actually be moving
         if (!h.wasTouching && h.offTime > 0.1 && h.cool <= 0 && speed > 0.35) {
           playHit(Math.min(speed, 4));
+          pulseHaptic(ci, Math.min(speed, 4)); // rumble the hand that hit
           h.cool = 0.15;
         }
         h.offTime = 0;
@@ -1494,46 +1510,113 @@
   // with the thumbstick. Y (or B) closes it and resumes. B alone is plain pause.
   let settingsOpen = false;
   const setCvs = document.createElement('canvas');
-  setCvs.width = 512; setCvs.height = 300;
+  setCvs.width = 512; setCvs.height = 400;
   const setCtx = setCvs.getContext('2d');
   const setTex = new THREE.CanvasTexture(setCvs);
+  let hoverVol = false, hoverHap = false;
+  const VOL_BAR = { x: 76, y: 142, w: 360, h: 34 };
+  const HAP_BTN = { x: 186, y: 288, w: 140, h: 52 };
   function drawSettings() {
     const g = setCtx;
-    g.fillStyle = '#10251a'; g.fillRect(0, 0, 512, 300);
-    g.strokeStyle = '#ffd23f'; g.lineWidth = 6; g.strokeRect(6, 6, 500, 288);
+    g.fillStyle = '#10251a'; g.fillRect(0, 0, 512, 400);
+    g.strokeStyle = '#ffd23f'; g.lineWidth = 6; g.strokeRect(6, 6, 500, 388);
     g.fillStyle = '#ffd23f'; g.font = 'bold 44px Trebuchet MS'; g.textAlign = 'center';
-    g.fillText('SETTINGS', 256, 62);
-    g.fillStyle = '#d8f0dd'; g.font = 'bold 28px Trebuchet MS';
-    g.fillText('Sound Volume', 256, 128);
-    g.fillStyle = '#0a1a12'; g.fillRect(76, 150, 360, 34);
+    g.fillText('SETTINGS', 256, 58);
+    g.fillStyle = '#d8f0dd'; g.font = 'bold 26px Trebuchet MS';
+    g.fillText('Sound Volume', 256, 120);
+    g.fillStyle = '#0a1a12'; g.fillRect(VOL_BAR.x, VOL_BAR.y, VOL_BAR.w, VOL_BAR.h);
     g.fillStyle = masterVolume === 1000 ? '#e63946' : '#57cc57';
-    g.fillRect(76, 150, masterVolume === 1000 ? 360 : 360 * masterVolume, 34);
-    g.strokeStyle = '#d8f0dd'; g.lineWidth = 3; g.strokeRect(76, 150, 360, 34);
-    g.fillStyle = masterVolume === 1000 ? '#ff5a5a' : '#ffd23f';
-    g.font = 'bold 26px Trebuchet MS';
-    g.fillText(masterVolume === 1000 ? '1,000' : Math.round(masterVolume * 100) + '%', 256, 222);
-    g.fillStyle = '#7fae8c'; g.font = '20px Trebuchet MS';
-    g.fillText('push stick left / right to adjust — Y to close', 256, 266);
+    g.fillRect(VOL_BAR.x, VOL_BAR.y, masterVolume === 1000 ? VOL_BAR.w : VOL_BAR.w * masterVolume, VOL_BAR.h);
+    g.strokeStyle = hoverVol ? '#ffd23f' : '#d8f0dd'; g.lineWidth = hoverVol ? 5 : 3;
+    g.strokeRect(VOL_BAR.x, VOL_BAR.y, VOL_BAR.w, VOL_BAR.h);
+    g.fillStyle = masterVolume === 1000 ? '#ff5a5a' : '#ffd23f'; g.font = 'bold 24px Trebuchet MS';
+    g.fillText(masterVolume === 1000 ? '1,000' : Math.round(masterVolume * 100) + '%', 256, 208);
+    g.fillStyle = '#d8f0dd'; g.font = 'bold 26px Trebuchet MS';
+    g.fillText('Haptics', 256, 266);
+    g.fillStyle = hapticsOn ? '#1e5c3a' : '#3a3a3a';
+    g.fillRect(HAP_BTN.x, HAP_BTN.y, HAP_BTN.w, HAP_BTN.h);
+    g.strokeStyle = hoverHap ? '#ffd23f' : (hapticsOn ? '#57cc57' : '#888888');
+    g.lineWidth = hoverHap ? 5 : 3;
+    g.strokeRect(HAP_BTN.x, HAP_BTN.y, HAP_BTN.w, HAP_BTN.h);
+    g.fillStyle = hapticsOn ? '#aef0be' : '#bbbbbb'; g.font = 'bold 30px Trebuchet MS';
+    g.fillText(hapticsOn ? 'ON' : 'OFF', 256, 324);
+    g.fillStyle = '#7fae8c'; g.font = '18px Trebuchet MS';
+    g.fillText('laser + trigger to change · stick also adjusts volume · Y to close', 256, 372);
     setTex.needsUpdate = true;
   }
   const setPanel = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.85, 0.5),
+    new THREE.PlaneGeometry(0.85, 0.664),
     new THREE.MeshBasicMaterial({ map: setTex, depthTest: false })
   );
   setPanel.renderOrder = 1002;
   setPanel.position.set(0, -0.02, -1.2);
+  // gold laser pointers, shown while settings is open
+  const raycaster = new THREE.Raycaster();
+  const _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3(), _rayQ = new THREE.Quaternion();
+  controllers.forEach(h => {
+    h.laser = new THREE.Mesh(
+      new THREE.BoxGeometry(0.006, 0.006, 3.0),
+      new THREE.MeshBasicMaterial({ color: 0xffd23f, depthTest: false })
+    );
+    h.laser.position.z = -1.5;
+    h.laser.renderOrder = 1004;
+  });
   function setSettings(open) {
     if (settingsOpen === open) return;
     settingsOpen = open;
     if (open) {
+      hoverVol = false; hoverHap = false;
       drawSettings();
       camera.add(setPanel);
+      controllers.forEach(h => h.ctrl.add(h.laser));    // lasers out
       if (!paused) togglePause(); // opening settings pauses the game
     } else {
       camera.remove(setPanel);
-      saveSettings();             // remember the volume for next time
+      controllers.forEach(h => h.ctrl.remove(h.laser)); // lasers away
+      saveSettings();             // remember everything for next time
       if (paused) togglePause();  // closing resumes it
     }
+  }
+  const setTrigWas = [false, false];
+  let dragPreview = false;
+  function updateSettingsPointer() {
+    const session = renderer.xr.getSession && renderer.xr.getSession();
+    if (!session || !session.inputSources) return;
+    let hv = false, hh = false, changed = false;
+    for (let i = 0; i < controllers.length; i++) {
+      const src = session.inputSources[i];
+      const gp = src && src.gamepad;
+      const trig = !!(gp && gp.buttons && gp.buttons[0] && gp.buttons[0].pressed);
+      const ctrl = controllers[i].ctrl;
+      ctrl.getWorldPosition(_rayO);
+      ctrl.getWorldQuaternion(_rayQ);
+      _rayD.set(0, 0, -1).applyQuaternion(_rayQ);
+      raycaster.set(_rayO, _rayD);
+      const hit = raycaster.intersectObject(setPanel, false)[0];
+      if (hit && hit.uv) {
+        const cx = hit.uv.x * 512, cy = (1 - hit.uv.y) * 400;
+        const onVol = cx > VOL_BAR.x - 12 && cx < VOL_BAR.x + VOL_BAR.w + 12 && cy > VOL_BAR.y - 14 && cy < VOL_BAR.y + VOL_BAR.h + 14;
+        const onHap = cx > HAP_BTN.x && cx < HAP_BTN.x + HAP_BTN.w && cy > HAP_BTN.y && cy < HAP_BTN.y + HAP_BTN.h;
+        if (onVol) hv = true;
+        if (onHap) hh = true;
+        if (onVol && trig) { // drag the volume bar with the laser
+          const nv = Math.round(Math.max(0, Math.min(1, (cx - VOL_BAR.x) / VOL_BAR.w)) * 20) / 20;
+          if (nv !== masterVolume) { masterVolume = nv; saveSettings(); changed = true; dragPreview = true; }
+        }
+        if (onVol && !trig && setTrigWas[i] && dragPreview) { // release: hear the new volume once
+          dragPreview = false;
+          if (masterVolume !== 1000) playHit(2);
+        }
+        if (onHap && trig && !setTrigWas[i]) { // tap the toggle
+          hapticsOn = !hapticsOn;
+          saveSettings();
+          changed = true;
+          if (hapticsOn) pulseHaptic(i, 2); // feel it turn on
+        }
+      }
+      setTrigWas[i] = trig;
+    }
+    if (hv !== hoverVol || hh !== hoverHap || changed) { hoverVol = hv; hoverHap = hh; drawSettings(); }
   }
 
   // ---------- pause (Y = settings, B = plain pause) ----------
@@ -1598,6 +1681,9 @@
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (renderer.xr.isPresenting) pollPauseButtons();
+    if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
+    if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
+    if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
     if (!paused) {
       gameT += dt;
       updateMovers(gameT);
