@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP — Gorilla Climb</title>
+<title>VirtualUP</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -63,7 +63,7 @@
   const hemi = new THREE.HemisphereLight(0xbfe8ff, 0x2c5232, 0.85);
   scene.add(hemi);
 
-  const camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.05, 400);
+  const camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.05, 210); // fog ends at 170 — no point drawing past it
 
   // player rig: everything (camera + hands) rides inside this
   const rig = new THREE.Group();
@@ -384,7 +384,9 @@
     py += 1.2;
   }
 
+  const levelStarts = []; // [{n, y, sp}] — where each of the 650 levels begins
   for (let z = 0; z < LEVELS.length; z++) {
+    levelStarts.push({ n: z + 1, y: py, sp: false });
     const L = LEVELS[z];
     const t = Math.min(z / 20, 1);                     // 0 easy → 1 max difficulty
     const g0 = 1.1 + t * 0.3,  g1 = 1.5 + t * 0.4;     // climbs up to [1.4, 1.9]
@@ -987,13 +989,89 @@
       addBox(px, py, pz, 3.2, 0.4, 3.2, matCloud); mark();                             // the net
       for (let i = 0; i < 3; i++) { step(0.7, 0.9, 1.0, 1.2); addBox(px, py, pz, 0.9, 0.3, 0.9, matCloud); }
     }
+    function sigOrbital(t) { // three platforms circling one hub — ride the wheel
+      step(0.7, 0.9, 1.3, 1.5);
+      addBox(px, py, pz, 1.4, 0.4, 1.4, matCrystal); // boarding dock
+      const ccx = px + Math.cos(heading) * 2.8, ccz = pz + Math.sin(heading) * 2.8;
+      for (let i = 0; i < 3; i++) {
+        addMover(ccx, py + 0.5, ccz, 1.2, 0.35, 1.2, matCrystal, 2.6, 0, 2.6, 0.4, i * 2.094);
+      }
+      px = ccx + Math.cos(heading) * 2.6; pz = ccz + Math.sin(heading) * 2.6;
+      py += 2.0; pathPts.push({ x: px, y: py, z: pz });
+      addBox(px, py, pz, 1.4, 0.4, 1.4, matCrystal); // exit on the far side, higher
+    }
+    function sigDoomChimney(t) { // a nine-meter chimney climb, two studs of mercy
+      step(0.8, 1.0, 1.2, 1.5);
+      addBox(px, py, pz, 1.6, 0.4, 1.6, matObsidian);
+      const ax = Math.abs(Math.cos(heading)) > Math.abs(Math.sin(heading));
+      const H = 9;
+      if (ax) { addBox(px, py + H / 2 + 0.4, pz - 0.72, 1.6, H, 0.3, matObsidian); addBox(px, py + H / 2 + 0.4, pz + 0.72, 1.6, H, 0.3, matObsidian); }
+      else    { addBox(px - 0.72, py + H / 2 + 0.4, pz, 0.3, H, 1.6, matObsidian); addBox(px + 0.72, py + H / 2 + 0.4, pz, 0.3, H, 1.6, matObsidian); }
+      addBox(px + (ax ? 0 : -0.45), py + 3.0, pz + (ax ? -0.45 : 0), 0.4, 0.24, 0.4, matStar);
+      addBox(px + (ax ? 0 : 0.45),  py + 6.0, pz + (ax ? 0.45 : 0),  0.4, 0.24, 0.4, matStar);
+      py += H + 0.55; pathPts.push({ x: px, y: py, z: pz });
+    }
+    function sigPendulumAlley(t) { // four fast wide swingers in a row
+      for (let i = 0; i < 4; i++) {
+        step(0.9, 1.1, 1.4, 1.6);
+        addMover(px, py, pz, 1.0, 0.35, 1.0, matStorm, 2.0, 0, 0, 1.25, i * 1.3);
+      }
+      step(0.6, 0.8, 1.2, 1.4);
+      addBox(px, py, pz, 1.3, 0.4, 1.3, matStorm);
+    }
+    function sigStairway(t) { // thirty kind little steps — breathe
+      for (let i = 0; i < 30; i++) {
+        stepTurn(0.32, 0.48, 0.58, 0.7, 0.85);
+        addBox(px, py, pz, 0.95, 0.3, 0.95, i % 2 ? matSand : matHoney);
+      }
+    }
+    function sigBlackoutBridge(t) { // ten dark meters, then dark pebbles
+      heading += (rnd() - 0.5) * 0.8;
+      const ax = Math.abs(Math.cos(heading)) > Math.abs(Math.sin(heading));
+      const sg = ((ax ? Math.cos(heading) : Math.sin(heading)) >= 0 ? 1 : -1);
+      const L = 10;
+      py += 0.7;
+      addBox(px + (ax ? sg * L / 2 : 0), py, pz + (ax ? 0 : sg * L / 2), ax ? L : 0.4, 0.3, ax ? 0.4 : L, matObsidian);
+      px += ax ? sg * L : 0; pz += ax ? 0 : sg * L;
+      pathPts.push({ x: px, y: py, z: pz });
+      for (let i = 0; i < 4; i++) { step(1.0, 1.2, 0.9, 1.2); addBox(px, py, pz, 0.55, 0.3, 0.55, matObsidian); }
+    }
+    function sigPistonOrgan(t) { // six pumping pistons phased like organ pipes
+      for (let i = 0; i < 6; i++) {
+        step(0.75, 0.9, 1.05, 1.25);
+        addMover(px, py, pz, 0.8, 0.4, 0.8, i % 2 ? matCopper : matSlate, 0, 0.85, 0, 1.15, i * 0.7);
+      }
+    }
+    function sigCanyon(t) { // two great islands, three stilt-tops between
+      step(0.8, 1.0, 1.5, 1.7);
+      addBox(px, py, pz, 4.2, 0.6, 4.2, matMoss);
+      for (let i = 0; i < 3; i++) {
+        step(0.45, 0.6, 1.9, 2.1);
+        addBox(px, py - 2.4, pz, 0.42, 5.0, 0.42, matRock2);
+        addBox(px, py + 0.15, pz, 0.6, 0.3, 0.6, matRock);
+      }
+      step(0.5, 0.7, 1.9, 2.1);
+      addBox(px, py, pz, 4.2, 0.6, 4.2, matMoss);
+    }
+    function sigHelix(t) { // a double corkscrew — crystal into gold
+      SEG[6](matCrystal, 1);
+      SEG[6](matGold, 1);
+    }
+    function sigFinalExam(t) { // everything you've learned, all at once
+      SEG[9](matIce, 1);       // pebbles
+      SEG[36](matStar, 1);     // gates
+      SEG[13](matObsidian, 1); // lifts
+    }
     const SIGNATURES = { 25: sigGreatWall, 50: sigElevatorShaft, 75: sigMaze, 100: sigAsteroidField,
                          125: sigVoidRope, 160: sigSpire, 190: sigGateGauntlet, 220: sigLongRide,
-                         250: sigDarkMaze, 280: sigSkyLadder, 310: sigLeapOfFaith, 335: sigFinalAscent };
+                         250: sigDarkMaze, 280: sigSkyLadder, 310: sigLeapOfFaith, 370: sigOrbital,
+                         400: sigDoomChimney, 430: sigPendulumAlley, 460: sigStairway,
+                         490: sigBlackoutBridge, 520: sigPistonOrgan, 550: sigCanyon,
+                         580: sigHelix, 610: sigFinalExam, 635: sigFinalAscent };
 
     // levels 1–199 (non-signature): a UNIQUE unordered PAIR of mechanics.
-    // levels 200–335 (non-signature): a UNIQUE unordered TRIPLE — longer, harder,
-    // and no combination in the whole game ever repeats.
+    // levels 200–449: a UNIQUE unordered TRIPLE. levels 450+: a UNIQUE QUAD.
+    // No combination in the whole game ever repeats.
     const pairs = [];
     for (let i = 0; i < SEG.length; i++) for (let j = i + 1; j < SEG.length; j++) pairs.push([i, j]);
     for (let i = pairs.length - 1; i > 0; i--) { // deterministic shuffle
@@ -1014,8 +1092,26 @@
                      matCopper, matEmerald, matObsidian, matSnow, matHoney, matCoral, matMint,
                      matSlate].concat(rainbowMats);
 
-    let p = 0, tr = 0;
-    for (let z = 0; z < 336; z++) {
+    // the deepest stretch (450+) uses unique QUADS — four mechanics per level,
+    // sampled so no four-way combination ever repeats
+    const quads = [];
+    {
+      const used = {};
+      while (quads.length < 190) {
+        const s = [];
+        while (s.length < 4) {
+          const v = Math.floor(rnd() * SEG.length);
+          if (s.indexOf(v) < 0) s.push(v);
+        }
+        s.sort((a, b) => a - b);
+        const key = s.join('-');
+        if (!used[key]) { used[key] = 1; quads.push(s); }
+      }
+    }
+
+    let p = 0, tr = 0, qd = 0;
+    for (let z = 0; z < 636; z++) {
+      levelStarts.push({ n: 15 + z, y: py, sp: true });
       const t = Math.min(z / 40, 1); // difficulty ramps over the first 40 space levels
       if (SIGNATURES[z]) {
         SIGNATURES[z](t);
@@ -1023,11 +1119,17 @@
         const pr = pairs[p++];
         SEG[pr[0]](palette[(z * 7 + pr[0]) % palette.length], t);
         SEG[pr[1]](palette[(z * 13 + pr[1] + 5) % palette.length], t);
-      } else {
+      } else if (z < 450) {
         const tri = triples[tr++];
         SEG[tri[0]](palette[(z * 7 + tri[0]) % palette.length], t);
         SEG[tri[1]](palette[(z * 13 + tri[1] + 5) % palette.length], t);
         SEG[tri[2]](palette[(z * 17 + tri[2] + 11) % palette.length], t);
+      } else {
+        const q = quads[qd++];
+        SEG[q[0]](palette[(z * 7 + q[0]) % palette.length], t);
+        SEG[q[1]](palette[(z * 13 + q[1] + 5) % palette.length], t);
+        SEG[q[2]](palette[(z * 17 + q[2] + 11) % palette.length], t);
+        SEG[q[3]](palette[(z * 23 + q[3] + 17) % palette.length], t);
       }
       // rest platform between levels
       step(1.1, 1.3, 1.0, 1.5);
@@ -1060,7 +1162,7 @@
 
   // ---------- floating decor: drifting rocks + far islands (no collision, no NPCs) ----------
   const floaters = [];
-  for (let i = 0; i < 260; i++) {
+  for (let i = 0; i < 380; i++) {
     const p = pathPts[Math.floor(rnd() * pathPts.length)];
     const a = rnd() * Math.PI * 2;
     const r = 6 + rnd() * 10;
@@ -1072,7 +1174,7 @@
     floaters.push({ m: rock, base: rock.position.y, ph: rnd() * 6.28, sp: 0.3 + rnd() * 0.5 });
   }
   // big far-off islands with a tree on top
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 42; i++) {
     const p = pathPts[Math.floor(rnd() * pathPts.length)];
     const a = rnd() * Math.PI * 2;
     const r = 14 + rnd() * 8;
@@ -1619,11 +1721,61 @@
     if (hv !== hoverVol || hh !== hoverHap || changed) { hoverVol = hv; hoverHap = hh; drawSettings(); }
   }
 
+  // ---------- level tracker + high score ----------
+  function currentLevel() {
+    const sp = rig.position.x >= 1000; // which map the player is on
+    let lvl = sp ? 15 : 1;
+    for (let i = 0; i < levelStarts.length; i++) {
+      const L = levelStarts[i];
+      if (L.sp !== sp) continue;
+      if (rig.position.y >= L.y - 0.5) lvl = L.n;
+      else break; // starts are in ascending order per map
+    }
+    return lvl;
+  }
+  let highScore = 1;
+  try {
+    const s = JSON.parse(localStorage.getItem('virtualup-highscore'));
+    if (typeof s === 'number' && s >= 1 && s <= 650) highScore = Math.floor(s);
+  } catch (e) {}
+  function saveHigh() {
+    try { localStorage.setItem('virtualup-highscore', JSON.stringify(highScore)); } catch (e) {}
+  }
+
+  // the pause HUD — level + high score at the very top of your view
+  const hudCvs = document.createElement('canvas');
+  hudCvs.width = 512; hudCvs.height = 170;
+  const hudCtx = hudCvs.getContext('2d');
+  const hudTex = new THREE.CanvasTexture(hudCvs);
+  const hudPanel = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.62, 0.206),
+    new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, depthTest: false })
+  );
+  hudPanel.renderOrder = 1006;
+  hudPanel.position.set(0, 0.42, -1.2); // top of the screen
+  function drawHud() {
+    const g = hudCtx;
+    g.clearRect(0, 0, 512, 170);
+    g.textAlign = 'center';
+    g.lineWidth = 8; g.strokeStyle = '#123c26';
+    g.font = 'bold 58px Trebuchet MS';
+    g.strokeText('Level: ' + currentLevel(), 256, 66);
+    g.fillStyle = '#ffd23f';
+    g.fillText('Level: ' + currentLevel(), 256, 66);
+    g.font = 'bold 44px Trebuchet MS';
+    g.strokeText('Highest: ' + highScore, 256, 136);
+    g.fillStyle = '#d8f0dd';
+    g.fillText('Highest: ' + highScore, 256, 136);
+    hudTex.needsUpdate = true;
+  }
+
   // ---------- pause (Y = settings, B = plain pause) ----------
   let paused = false;
   let yWas = false, bWas = false, stickCentered = true;
   function togglePause() {
     paused = !paused;
+    if (paused) { drawHud(); camera.add(hudPanel); } // level + highest, top of screen
+    else camera.remove(hudPanel);
     for (const h of controllers) {
       if (paused) {
         rig.remove(h.ball);      // ball hands deleted
@@ -1678,6 +1830,7 @@
   // ---------- main loop ----------
   const clock = new THREE.Clock();
   let gameT = 0; // game time stands still while paused, so movers resume exactly where they froze
+  let lvlCheckT = 0;
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (renderer.xr.isPresenting) pollPauseButtons();
@@ -1686,6 +1839,12 @@
     if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
     if (!paused) {
       gameT += dt;
+      lvlCheckT += dt;
+      if (lvlCheckT > 0.25 && renderer.xr.isPresenting && !tp) {
+        lvlCheckT = 0;
+        const cl = currentLevel();
+        if (cl > highScore) { highScore = cl; saveHigh(); }
+      }
       updateMovers(gameT);
       updateTeleport(dt);
       // the space look belongs to the space map
