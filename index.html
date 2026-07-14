@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP</title>
+<title>VirtualUP — Gorilla Climb</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -11,15 +11,31 @@
     position: fixed; inset: 0; z-index: 10; background: #ffffff;
     display: flex; align-items: center; justify-content: center;
   }
+  #startbox { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  #roomrow { display: flex; align-items: center; gap: 10px; font: bold 20px Arial, sans-serif; color: #000; }
+  #roomcode {
+    font: bold 22px monospace; text-transform: uppercase; text-align: center;
+    border: 2px solid #000; border-radius: 6px; padding: 8px 12px; width: 170px;
+  }
   #startvr {
     font: bold 28px Arial, sans-serif; color: #000; background: #fff;
     border: 2px solid #000; border-radius: 8px; padding: 18px 48px; cursor: pointer;
   }
   #startvr:active { background: #eee; }
+  #roomnote { font: 14px Arial, sans-serif; color: #666; }
 </style>
 </head>
 <body>
-<div id="startpage"><button id="startvr">Start VR</button></div>
+<div id="startpage">
+  <div id="startbox">
+    <div id="roomrow">
+      <label for="roomcode">Room</label>
+      <input id="roomcode" maxlength="12" value="PUBLIC" autocomplete="off" spellcheck="false">
+    </div>
+    <button id="startvr">Start VR</button>
+    <div id="roomnote">Everyone who enters the same room plays together.</div>
+  </div>
+</div>
 <script type="text/plain" id="gamecode">
 (function () {
   'use strict';
@@ -1744,11 +1760,11 @@
 
   // the pause HUD — level + high score at the very top of your view
   const hudCvs = document.createElement('canvas');
-  hudCvs.width = 512; hudCvs.height = 170;
+  hudCvs.width = 512; hudCvs.height = 200;
   const hudCtx = hudCvs.getContext('2d');
   const hudTex = new THREE.CanvasTexture(hudCvs);
   const hudPanel = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.62, 0.206),
+    new THREE.PlaneGeometry(0.62, 0.242),
     new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, depthTest: false })
   );
   hudPanel.renderOrder = 1006;
@@ -1763,9 +1779,17 @@
     g.fillStyle = '#ffd23f';
     g.fillText('Level: ' + currentLevel(), 256, 66);
     g.font = 'bold 44px Trebuchet MS';
-    g.strokeText('Highest: ' + highScore, 256, 136);
+    g.strokeText('Highest: ' + highScore, 256, 128);
     g.fillStyle = '#d8f0dd';
-    g.fillText('Highest: ' + highScore, 256, 136);
+    g.fillText('Highest: ' + highScore, 256, 128);
+    // room status
+    g.font = 'bold 30px Trebuchet MS';
+    const label = (net.status === 'hosting' || net.status === 'connected')
+      ? 'Room ' + net.room + ' — ' + net.count + (net.count === 1 ? ' player' : ' players')
+      : 'Room ' + net.room + ' — ' + net.status;
+    g.strokeText(label, 256, 168);
+    g.fillStyle = '#8fd8a8';
+    g.fillText(label, 256, 168);
     hudTex.needsUpdate = true;
   }
 
@@ -1827,12 +1851,149 @@
     }
   }
 
+  // ---------- MULTIPLAYER ----------
+  // Peer-to-peer over WebRTC. The first player in a room becomes the HOST — the
+  // server everyone else connects to. The host merges everyone's positions and
+  // broadcasts the world state ~15x a second. No accounts, no setup.
+  const net = {
+    peer: null, isHost: false, conns: [], hostConn: null,
+    others: new Map(), // id -> avatar
+    sendT: 0, status: 'offline', count: 1, room: 'PUBLIC'
+  };
+
+  function makeAvatar() {
+    const g = new THREE.Group();
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), handMat);
+    const lh = new THREE.Mesh(handGeo, handMat);
+    const rh = new THREE.Mesh(handGeo, handMat);
+    g.add(head, lh, rh);
+    g.head = head; g.lh = lh; g.rh = rh;
+    // where they're smoothly moving toward (network updates arrive in chunks)
+    g.tHead = new THREE.Vector3(); g.tL = new THREE.Vector3(); g.tR = new THREE.Vector3();
+    scene.add(g);
+    return g;
+  }
+  function removeAvatar(id) {
+    const a = net.others.get(id);
+    if (a) { scene.remove(a); net.others.delete(id); }
+    net.count = 1 + net.others.size;
+  }
+
+  // my state: head + both hands, in world space
+  const _mh = new THREE.Vector3(), _ml = new THREE.Vector3(), _mr = new THREE.Vector3();
+  function myState() {
+    camera.getWorldPosition(_mh);
+    controllers[0].ball.getWorldPosition(_ml);
+    controllers[1].ball.getWorldPosition(_mr);
+    const r = v => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100];
+    return { h: r(_mh), l: r(_ml), r: r(_mr) };
+  }
+  function applyState(id, s) {
+    if (!s || !s.h) return;
+    let a = net.others.get(id);
+    if (!a) { a = makeAvatar(); net.others.set(id, a); net.count = 1 + net.others.size; }
+    a.tHead.set(s.h[0], s.h[1], s.h[2]);
+    a.tL.set(s.l[0], s.l[1], s.l[2]);
+    a.tR.set(s.r[0], s.r[1], s.r[2]);
+    a.seen = performance.now();
+  }
+  function lerpAvatars(dt) {
+    const k = Math.min(dt * 14, 1); // smooth between network updates
+    const now = performance.now();
+    net.others.forEach((a, id) => {
+      a.head.position.lerp(a.tHead, k);
+      a.lh.position.lerp(a.tL, k);
+      a.rh.position.lerp(a.tR, k);
+      if (now - (a.seen || now) > 12000) removeAvatar(id); // gone quiet — drop them
+    });
+  }
+
+  function netTick(dt) {
+    net.sendT += dt;
+    if (net.sendT < 1 / 15) return; // 15 updates a second
+    net.sendT = 0;
+    const me = myState();
+    if (net.isHost) {
+      // the host IS the server: merge everyone and broadcast the world
+      const world = { t: 'w', p: { host: me } };
+      net.others.forEach((a, id) => {
+        world.p[id] = { h: [a.tHead.x, a.tHead.y, a.tHead.z],
+                        l: [a.tL.x, a.tL.y, a.tL.z], r: [a.tR.x, a.tR.y, a.tR.z] };
+      });
+      for (const c of net.conns) {
+        if (!c.open) continue;
+        // don't send a player their own body back
+        const out = { t: 'w', p: {} };
+        for (const k in world.p) if (k !== c.peer) out.p[k] = world.p[k];
+        try { c.send(out); } catch (e) {}
+      }
+    } else if (net.hostConn && net.hostConn.open) {
+      try { net.hostConn.send({ t: 'm', s: me }); } catch (e) {}
+    }
+  }
+
+  function startNetworking(room) {
+    if (typeof Peer === 'undefined') { net.status = 'offline'; return; }
+    const hostId = 'virtualup-' + room + '-host';
+    net.status = 'connecting';
+
+    function becomeClient() {
+      net.isHost = false;
+      const p = new Peer(); // random id
+      net.peer = p;
+      p.on('open', () => {
+        const c = p.connect(hostId, { reliable: false });
+        net.hostConn = c;
+        c.on('open', () => { net.status = 'connected'; });
+        c.on('data', d => {
+          if (!d || d.t !== 'w') return;
+          const seen = new Set();
+          for (const id in d.p) { applyState(id, d.p[id]); seen.add(id); }
+          net.others.forEach((a, id) => { if (!seen.has(id)) removeAvatar(id); });
+        });
+        c.on('close', () => { net.status = 'host left'; net.others.forEach((a, id) => removeAvatar(id)); tryHost(); });
+        c.on('error', () => { net.status = 'error'; });
+      });
+      p.on('error', () => { net.status = 'error'; });
+    }
+
+    function tryHost() {
+      const p = new Peer(hostId); // claim the room's host slot
+      net.peer = p;
+      p.on('open', () => {
+        net.isHost = true;
+        net.status = 'hosting';
+        p.on('connection', c => {
+          net.conns.push(c);
+          c.on('data', d => { if (d && d.t === 'm') applyState(c.peer, d.s); });
+          const drop = () => {
+            net.conns = net.conns.filter(x => x !== c);
+            removeAvatar(c.peer);
+          };
+          c.on('close', drop);
+          c.on('error', drop);
+        });
+      });
+      p.on('error', err => {
+        // id already taken -> somebody's already hosting; join them instead
+        if (err && (err.type === 'unavailable-id' || String(err).indexOf('taken') >= 0)) {
+          try { p.destroy(); } catch (e) {}
+          becomeClient();
+        } else {
+          net.status = 'error';
+        }
+      });
+    }
+    tryHost();
+  }
+
   // ---------- main loop ----------
   const clock = new THREE.Clock();
   let gameT = 0; // game time stands still while paused, so movers resume exactly where they froze
   let lvlCheckT = 0;
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
+    if (renderer.xr.isPresenting) { netTick(dt); lerpAvatars(dt); }
     if (renderer.xr.isPresenting) pollPauseButtons();
     if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
     if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
@@ -1876,8 +2037,10 @@
   });
 
   // ---------- launch (called by the bootstrap once WebXR is granted) ----------
-  window.__vuLaunch = function (session) {
+  window.__vuLaunch = function (session, room) {
     initAudio();
+    net.room = room || 'PUBLIC';
+    startNetworking(net.room);
     renderer.xr.setReferenceSpaceType('local-floor');
     renderer.xr.setSession(session);
     camera.position.set(0, 0, 0); // hand control back to the headset
@@ -1931,24 +2094,35 @@
         function boot() {
           try {
             if (!window.__vuLaunch) (0, eval)(document.getElementById('gamecode').textContent); // build the game NOW
-            window.__vuLaunch(session);
+            const room = (document.getElementById('roomcode').value || 'PUBLIC')
+              .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'PUBLIC';
+            window.__vuLaunch(session, room);
             page.style.display = 'none';
             btn.textContent = 'Start VR';
           } catch (e) { showError(e.message); }
           launching = false;
         }
-        if (window.THREE) { boot(); return; }
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-        s.crossOrigin = 'anonymous';
-        s.onload = boot;
-        s.onerror = function () {
-          launching = false;
-          btn.textContent = 'Start VR';
-          showError('the 3D engine failed to download — check your internet and try again');
-          session.end();
-        };
-        document.head.appendChild(s);
+        // load the 3D engine and the peer-to-peer networking library, then boot
+        let pending = 0, failed = false;
+        function need(src, ready) {
+          if (ready()) return;
+          pending++;
+          const s = document.createElement('script');
+          s.src = src;
+          s.crossOrigin = 'anonymous';
+          s.onload = function () { if (--pending === 0 && !failed) boot(); };
+          s.onerror = function () {
+            failed = true;
+            launching = false;
+            btn.textContent = 'Start VR';
+            showError('a required library failed to download — check your internet and try again');
+            try { session.end(); } catch (e) {}
+          };
+          document.head.appendChild(s);
+        }
+        need('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', function () { return !!window.THREE; });
+        need('https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js', function () { return !!window.Peer; });
+        if (pending === 0) boot();
       })
       .catch(function () { launching = false; btn.textContent = 'VR not available on this device'; });
   });
