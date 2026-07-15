@@ -22,11 +22,6 @@
     border: 2px solid #000; border-radius: 8px; padding: 18px 48px; cursor: pointer;
   }
   #startvr:active { background: #eee; }
-  #spectate {
-    font: bold 17px Arial, sans-serif; color: #444; background: #fff;
-    border: 2px solid #888; border-radius: 8px; padding: 10px 26px; cursor: pointer;
-  }
-  #spectate:active { background: #eee; }
   #roomnote { font: 14px Arial, sans-serif; color: #666; }
 </style>
 </head>
@@ -42,8 +37,7 @@
       <input id="roomcode" maxlength="12" value="PUBLIC" autocomplete="off" spellcheck="false">
     </div>
     <button id="startvr">Start VR</button>
-    <button id="spectate">Spectate (no headset)</button>
-    <div id="roomnote">More Multiplayer Update - 3.0.0</div>
+    <div id="roomnote">Everyone who enters the same room plays together.</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -1826,8 +1820,8 @@
   const LB_ROW_Y = 118, LB_ROW_H = 42, LB_KICK = { x: 388, w: 86, h: 32 };
 
   function lbRows() {
-    const rows = [{ id: 'me', name: net.name + ' (you)', lv: spectating ? 0 : currentLevel(), sp: spectating }];
-    net.others.forEach((a, id) => rows.push({ id, name: a.name || '???', lv: a.sp ? 0 : (a.lv || 1), sp: a.sp }));
+    const rows = [{ id: 'me', name: net.name + ' (you)', lv: currentLevel() }];
+    net.others.forEach((a, id) => rows.push({ id, name: a.name || '???', lv: a.lv || 1 }));
     rows.sort((a, b) => b.lv - a.lv);
     return rows.slice(0, 7);
   }
@@ -1848,7 +1842,7 @@
       g.font = 'bold 26px Trebuchet MS';
       g.fillText('#' + (i + 1) + '  ' + String(r.name).slice(0, 14), 26, y + 24);
       g.textAlign = 'right';
-      g.fillText(r.sp ? 'spec' : ('lvl ' + r.lv), net.isHost && r.id !== 'me' ? 378 : 486, y + 24);
+      g.fillText('lvl ' + r.lv, net.isHost && r.id !== 'me' ? 378 : 486, y + 24);
       if (net.isHost && r.id !== 'me') { // only the host gets the button
         g.fillStyle = lbHover === i ? '#a01818' : '#5c1010';
         g.fillRect(LB_KICK.x, y + 2, LB_KICK.w, LB_KICK.h);
@@ -2040,23 +2034,6 @@
   }
   const faceMats = [0, 1, 2, 3].map(k => new THREE.MeshBasicMaterial({ map: makeFaceTex(k), transparent: true }));
 
-  // spectators (mobile/PC) appear as WHITE heads
-  const specHeadMat = (() => {
-    const c = document.createElement('canvas');
-    c.width = c.height = 16;
-    const g = c.getContext('2d');
-    const shades = ['#c8c8d2', '#dadade', '#e9e9ee', '#f6f6fa', '#ffffff', '#d2d2da'];
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-      g.fillStyle = shades[Math.random() * shades.length | 0];
-      g.fillRect(x, y, 1, 1);
-    }
-    const t = new THREE.CanvasTexture(c);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter;
-    t.generateMipmaps = false;
-    return new THREE.MeshLambertMaterial({ color: 0xffffff, map: t });
-  })();
-
   function makeTag(name) {
     const c = document.createElement('canvas');
     c.width = 256; c.height = 64;
@@ -2076,13 +2053,11 @@
     return s;
   }
 
-  function makeAvatar(sp) {
+  function makeAvatar() {
     const g = new THREE.Group();
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), sp ? specHeadMat : handMat);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), handMat);
     const lh = new THREE.Mesh(handGeo, handMat);
     const rh = new THREE.Mesh(handGeo, handMat);
-    if (sp) { lh.visible = false; rh.visible = false; } // spectators are just a head
-    g.sp = !!sp;
     g.add(head, lh, rh);
     const face = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.24), faceMats[0]);
     face.position.z = -0.162;
@@ -2106,25 +2081,19 @@
   const _mh = new THREE.Vector3(), _ml = new THREE.Vector3(), _mr = new THREE.Vector3();
   function myState() {
     camera.getWorldPosition(_mh);
-    if (spectating) { _ml.copy(_mh); _mr.copy(_mh); }
-    else {
-      controllers[0].ball.getWorldPosition(_ml);
-      controllers[1].ball.getWorldPosition(_mr);
-    }
+    controllers[0].ball.getWorldPosition(_ml);
+    controllers[1].ball.getWorldPosition(_mr);
     camera.getWorldQuaternion(_mq);
     const r = v => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100];
     const q = [Math.round(_mq.x * 100) / 100, Math.round(_mq.y * 100) / 100,
                Math.round(_mq.z * 100) / 100, Math.round(_mq.w * 100) / 100];
-    const st = { h: r(_mh), l: r(_ml), r: r(_mr), q: q, n: net.name, f: mic.state,
-                 lv: spectating ? 0 : currentLevel() };
-    if (spectating) st.sp = 1;
-    return st;
+    return { h: r(_mh), l: r(_ml), r: r(_mr), q: q, n: net.name, f: mic.state, lv: currentLevel() };
   }
   const _mq = new THREE.Quaternion();
   function applyState(id, s) {
     if (!s || !s.h) return;
     let a = net.others.get(id);
-    if (!a) { a = makeAvatar(!!s.sp); net.others.set(id, a); net.count = 1 + net.others.size; }
+    if (!a) { a = makeAvatar(); net.others.set(id, a); net.count = 1 + net.others.size; }
     a.tHead.set(s.h[0], s.h[1], s.h[2]);
     a.tL.set(s.l[0], s.l[1], s.l[2]);
     a.tR.set(s.r[0], s.r[1], s.r[2]);
@@ -2168,7 +2137,7 @@
         world.p[id] = { h: [a.tHead.x, a.tHead.y, a.tHead.z],
                         l: [a.tL.x, a.tL.y, a.tL.z], r: [a.tR.x, a.tR.y, a.tR.z],
                         q: [a.tQ.x, a.tQ.y, a.tQ.z, a.tQ.w],
-                        n: a.name, f: a.face, lv: a.lv, sp: a.sp ? 1 : 0 };
+                        n: a.name, f: a.face, lv: a.lv };
       });
       for (const c of net.conns) {
         if (!c.open) continue;
@@ -2184,80 +2153,10 @@
     }
   }
 
-  // ---------- SPECTATOR MODE (mobile / PC / anything without a headset) ----------
-  let spectating = false;
-  let specTarget = null, specYaw = 0.6, specPitch = 0.25, specDist = 3.4;
-  const _specLook = new THREE.Vector3(), _specWant = new THREE.Vector3();
-  function specTick(dt) {
-    // follow the current target; if they vanish, pick the highest non-spectator
-    let a = specTarget ? net.others.get(specTarget) : null;
-    if (!a || a.sp) {
-      specTarget = null;
-      let bestLv = -1;
-      net.others.forEach((av, id) => { if (!av.sp && (av.lv || 0) >= bestLv) { bestLv = av.lv || 0; specTarget = id; } });
-      a = specTarget ? net.others.get(specTarget) : null;
-    }
-    if (a) _specLook.copy(a.head.position);
-    else _specLook.set(0, 8, 0); // nobody to watch yet — hover at the tower
-    _specWant.set(
-      _specLook.x + Math.cos(specYaw) * Math.cos(specPitch) * specDist,
-      _specLook.y + Math.sin(specPitch) * specDist,
-      _specLook.z + Math.sin(specYaw) * Math.cos(specPitch) * specDist
-    );
-    camera.position.lerp(_specWant, Math.min(dt * 3, 1));
-    camera.lookAt(_specLook);
-    const bar = document.getElementById('specbar');
-    if (bar) bar.textContent = 'SPECTATING ' + net.room + ' — ' +
-      (a ? ('watching ' + (a.name || '???') + (a.sp ? '' : ' (lvl ' + (a.lv || 1) + ')')) : 'waiting for players…') +
-      ' — ' + net.status + ' · drag to orbit · tap to switch player';
-  }
-  function specCycleTarget() {
-    const ids = [];
-    net.others.forEach((a, id) => { if (!a.sp) ids.push(id); });
-    if (!ids.length) return;
-    specTarget = ids[(ids.indexOf(specTarget) + 1) % ids.length];
-  }
-  function spectatorJoin() {
-    if (net.kicked) return;
-    net.isHost = false;
-    net.status = 'looking for a lobby';
-    const hostId = 'virtualup-' + net.room + '-host';
-    const p = new Peer();
-    net.peer = p;
-    p.on('open', () => {
-      const c = p.connect(hostId, { reliable: false });
-      net.hostConn = c;
-      const retry = () => {
-        if (net.kicked) return;
-        net.status = 'waiting for a lobby';
-        net.others.forEach((a, id) => removeAvatar(id));
-        try { p.destroy(); } catch (e) {}
-        setTimeout(spectatorJoin, 5000); // keep trying until a headset hosts the room
-      };
-      c.on('open', () => { net.status = 'spectating'; });
-      c.on('data', d => {
-        if (d && d.t === 'kick') {
-          net.kicked = true; net.status = 'kicked by host';
-          try { c.close(); } catch (e) {}
-          net.others.forEach((a, id) => removeAvatar(id));
-          return;
-        }
-        if (!d || d.t !== 'w') return;
-        const seen = new Set();
-        for (const id in d.p) { applyState(id, d.p[id]); seen.add(id); }
-        net.others.forEach((a, id) => { if (!seen.has(id)) removeAvatar(id); });
-      });
-      c.on('close', retry);
-      c.on('error', retry);
-    });
-    p.on('error', () => { if (!net.kicked) setTimeout(spectatorJoin, 5000); });
-  }
-
   function startNetworking(room) {
     if (typeof Peer === 'undefined') { net.status = 'offline'; return; }
     const hostId = 'virtualup-' + room + '-host';
     net.status = 'connecting';
-    if (net.spectator) { spectatorJoin(); return; } // spectators only ever watch
 
     function becomeClient() {
       net.isHost = false;
@@ -2327,7 +2226,7 @@
   let lvlCheckT = 0;
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
-    if (renderer.xr.isPresenting || spectating) { netTick(dt); lerpAvatars(dt); }
+    if (renderer.xr.isPresenting) { netTick(dt); lerpAvatars(dt); }
     if (renderer.xr.isPresenting) pollPauseButtons();
     if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
     if (renderer.xr.isPresenting && lbOpen) {
@@ -2341,7 +2240,7 @@
     updateMovers(gameT);
     updateTeleport(dt);
     {
-      const sfTarget = (spectating ? (camera.position.x >= 1000) : inSpace) ? 1 : 0;
+      const sfTarget = inSpace ? 1 : 0;
       spaceF += (sfTarget - spaceF) * Math.min(dt * 2.5, 1);
       if (Math.abs(spaceF - lastSpaceF) > 0.003) { applySpace(spaceF); lastSpaceF = spaceF; }
     }
@@ -2353,9 +2252,6 @@
         if (cl > highScore) { highScore = cl; saveHigh(); }
       }
       if (renderer.xr.isPresenting && !tp) { checkShipTrigger(); updateVR(dt); }
-      else if (spectating) {
-        specTick(dt); // follow-cam does the flying
-      }
       else if (!renderer.xr.isPresenting) {
         // no menus, no modes: while waiting for VR, the camera slowly circles the tower
         const a = gameT * 0.06;
@@ -2380,37 +2276,6 @@
   });
 
   // ---------- launch (called by the bootstrap once WebXR is granted) ----------
-  window.__vuSpectate = function (room, name) {
-    spectating = true;
-    net.spectator = true;
-    net.room = room || 'PUBLIC';
-    net.name = (name || 'VIEWER').slice(0, 14);
-    rig.position.set(0, 0, 0);          // spectator camera works in world coords
-    camera.position.set(10, 8, 10);
-    initAudio();
-    startMic();                          // faces work for spectators too
-    startNetworking(net.room);
-    // status bar
-    const bar = document.createElement('div');
-    bar.id = 'specbar';
-    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(10,20,14,.85);' +
-      'color:#d8f0dd;font:bold 14px Arial,sans-serif;padding:9px 12px;text-align:center;';
-    document.body.appendChild(bar);
-    // drag = orbit around the watched player, tap = switch player, wheel = zoom
-    let down = false, moved = 0, lx = 0, ly = 0;
-    renderer.domElement.addEventListener('pointerdown', e => { down = true; moved = 0; lx = e.clientX; ly = e.clientY; });
-    window.addEventListener('pointermove', e => {
-      if (!down) return;
-      const dx = e.clientX - lx, dy = e.clientY - ly;
-      moved += Math.abs(dx) + Math.abs(dy);
-      specYaw += dx * 0.008;
-      specPitch = Math.max(-0.2, Math.min(1.2, specPitch + dy * 0.006));
-      lx = e.clientX; ly = e.clientY;
-    });
-    window.addEventListener('pointerup', () => { if (down && moved < 8) specCycleTarget(); down = false; });
-    window.addEventListener('wheel', e => { specDist = Math.max(1.6, Math.min(12, specDist + e.deltaY * 0.004)); });
-  };
-
   window.__vuLaunch = function (session, room, name) {
     initAudio();
     startMic();
@@ -2439,8 +2304,10 @@
 })();
 </script>
 <script>
-// bootstrap — the only code that runs when the website opens. The 3D engine and
-// the game are loaded only after the user clicks Start VR.
+// bootstrap — the only code that runs when the website opens.
+// ORDER MATTERS: we download the engine and build the whole game FIRST, and
+// request the VR session LAST. Quest kills sessions that sit idle while a page
+// loads — requesting late means frames start instantly and nothing gets killed.
 (function () {
   function showError(msg) {
     let bar = document.getElementById('errbar');
@@ -2455,52 +2322,29 @@
   window.addEventListener('error', function (e) { showError(e.message || 'unknown script error'); });
   const page = document.getElementById('startpage');
   const btn = document.getElementById('startvr');
-  window.__vuShowStart = function () { page.style.display = 'flex'; };
-  let launching = false;
   try {
     const n = localStorage.getItem('virtualup-name'); if (n) document.getElementById('playername').value = n;
     const r = localStorage.getItem('virtualup-room'); if (r) document.getElementById('roomcode').value = r;
   } catch (e) {}
-  function requireName() {
-    const nameEl = document.getElementById('playername');
-    const name = (nameEl.value || '').trim().slice(0, 14);
-    if (!name) {
-      nameEl.style.borderColor = '#cc0000';
-      nameEl.placeholder = 'type a name first!';
-      nameEl.focus();
-      return null;
-    }
-    return name;
-  }
-  function loadLibsThen(fn) {
+
+  let launching = false, gameReady = false;
+  function loadLibs(done, fail) {
     let pending = 0, failed = false;
     function need(src, ready) {
       if (ready()) return;
       pending++;
       const s = document.createElement('script');
-      s.src = src; s.crossOrigin = 'anonymous';
-      s.onload = function () { if (--pending === 0 && !failed) fn(); };
-      s.onerror = function () { failed = true; showError('a required library failed to download — check your internet'); };
+      s.src = src;
+      s.crossOrigin = 'anonymous';
+      s.onload = function () { if (--pending === 0 && !failed) done(); };
+      s.onerror = function () { failed = true; fail('a required library failed to download — check your internet and try again'); };
       document.head.appendChild(s);
     }
     need('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', function () { return !!window.THREE; });
     need('https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js', function () { return !!window.Peer; });
-    if (pending === 0) fn();
+    if (pending === 0) done();
   }
-  document.getElementById('spectate').addEventListener('click', function () {
-    const name = requireName();
-    if (!name) return;
-    const room = (document.getElementById('roomcode').value || 'PUBLIC')
-      .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'PUBLIC';
-    try { localStorage.setItem('virtualup-name', name); localStorage.setItem('virtualup-room', room); } catch (e) {}
-    loadLibsThen(function () {
-      try {
-        if (!window.__vuSpectate) (0, eval)(document.getElementById('gamecode').textContent);
-        window.__vuSpectate(room, name);
-        page.style.display = 'none';
-      } catch (e) { showError(e.message); }
-    });
-  });
+
   btn.addEventListener('click', function () {
     if (launching) return;
     const nameEl = document.getElementById('playername');
@@ -2512,45 +2356,43 @@
       return;
     }
     if (!navigator.xr) { btn.textContent = 'VR not available on this device'; return; }
-    launching = true;
-    btn.textContent = 'Starting…';
-    navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
-      .then(function (session) {
-        function boot() {
-          try {
-            if (!window.__vuLaunch) (0, eval)(document.getElementById('gamecode').textContent); // build the game NOW
-            const room = (document.getElementById('roomcode').value || 'PUBLIC')
-              .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'PUBLIC';
-            try { localStorage.setItem('virtualup-name', name); localStorage.setItem('virtualup-room', room); } catch (e) {}
-            window.__vuLaunch(session, room, name);
-            page.style.display = 'none';
-            btn.textContent = 'Start VR';
-          } catch (e) { showError(e.message); }
+    const room = (document.getElementById('roomcode').value || 'PUBLIC')
+      .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'PUBLIC';
+    try { localStorage.setItem('virtualup-name', name); localStorage.setItem('virtualup-room', room); } catch (e) {}
+
+    function enterVR() {
+      navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
+        .then(function (session) {
+          window.__vuLaunch(session, room, name); // world is already built — frames start immediately
+          page.style.display = 'none';
+          btn.textContent = 'Start VR';
           launching = false;
-        }
-        // load the 3D engine and the peer-to-peer networking library, then boot
-        let pending = 0, failed = false;
-        function need(src, ready) {
-          if (ready()) return;
-          pending++;
-          const s = document.createElement('script');
-          s.src = src;
-          s.crossOrigin = 'anonymous';
-          s.onload = function () { if (--pending === 0 && !failed) boot(); };
-          s.onerror = function () {
-            failed = true;
-            launching = false;
-            btn.textContent = 'Start VR';
-            showError('a required library failed to download — check your internet and try again');
-            try { session.end(); } catch (e) {}
-          };
-          document.head.appendChild(s);
-        }
-        need('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', function () { return !!window.THREE; });
-        need('https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js', function () { return !!window.Peer; });
-        if (pending === 0) boot();
-      })
-      .catch(function () { launching = false; btn.textContent = 'VR not available on this device'; });
+        })
+        .catch(function () {
+          // the browser wants a fresh tap now that loading is done
+          launching = false;
+          btn.textContent = 'Ready — tap to enter VR';
+        });
+    }
+
+    if (gameReady) { launching = true; enterVR(); return; }
+    launching = true;
+    btn.textContent = 'Loading…';
+    loadLibs(function () {
+      try {
+        if (!window.__vuLaunch) (0, eval)(document.getElementById('gamecode').textContent); // build the game NOW
+        gameReady = true;
+        enterVR(); // only after everything is ready do we ask for the session
+      } catch (e) {
+        launching = false;
+        btn.textContent = 'Start VR';
+        showError(e.message);
+      }
+    }, function (msg) {
+      launching = false;
+      btn.textContent = 'Start VR';
+      showError(msg);
+    });
   });
 })();
 </script>
