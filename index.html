@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP</title>
+<title>VirtualUP — Gorilla Climb</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -33,7 +33,7 @@
       <input id="roomcode" maxlength="12" value="PUBLIC" autocomplete="off" spellcheck="false">
     </div>
     <button id="startvr">Start VR</button>
-    <div id="roomnote">Version 2.0.0 - Multiplayer Update</div>
+    <div id="roomnote">Everyone who enters the same room plays together.</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -351,7 +351,7 @@
   // levels 15–55 live. The jungle map keeps everything below.
   let inSpace = false, teleported = false;
   let shipTrigger = null;
-  const SPACE_SPAWN = new THREE.Vector3(2000, 30.26, 0.8);
+  const SPACE_SPAWN = new THREE.Vector3(2000, 30.26, 0.5);
 
   function buildSpaceport() {
     // landing pad at the end of the jungle climb
@@ -383,7 +383,7 @@
 
     // ---- THE SPACE MAP starts here: 2km away, its own little world ----
     px = 2000; pz = 0; py = 30; heading = rnd() * 6.28;
-    addBox(px, py, pz, 4.2, 0.5, 4.2, matObsidian); // arrival pad
+    addBox(px, py, pz, 6.0, 0.5, 6.0, matObsidian); // arrival pad (extra-wide: nobody falls off spawn)
     pathPts.push({ x: px, y: py, z: pz });
     // the ship that brought you, parked at the pad's edge — SOLID now, but
     // purely decorative: you can land on it, and it never teleports you anywhere
@@ -1292,7 +1292,7 @@
     if (audioCtx && audioCtx.state === 'running') audioCtx.suspend(); // silence
   }
   function doTeleport() {
-    rig.position.copy(SPACE_SPAWN);
+    placePlayerAt(SPACE_SPAWN);
     velocity.set(0, 0, 0);
     rideMover = null; rideGrace = 0;
     controllers.forEach(c => { c.prev = null; c.wasTouching = false; });
@@ -1516,11 +1516,16 @@
     return null;
   }
 
+  function placePlayerAt(target) {
+    rig.position.copy(target);
+    rig.position.x -= camera.position.x; // cancel the player's physical room offset
+    rig.position.z -= camera.position.z; // so their BODY lands on the target
+  }
   function respawnIfFallen() {
     if (inSpace) {
       // no mercy: fall off the space map and you're back at the very bottom of the jungle
       if (rig.position.y < 5) {
-        rig.position.copy(SPAWN);
+        placePlayerAt(SPAWN);
         velocity.set(0, 0, 0);
         rideMover = null; rideGrace = 0;
         controllers.forEach(c => c.prev = null);
@@ -1528,7 +1533,7 @@
         teleported = false; // the ship will take you again... once you've earned it
       }
     } else if (rig.position.y < -4) {
-      rig.position.copy(SPAWN);
+      placePlayerAt(SPAWN);
       velocity.set(0, 0, 0);
       rideMover = null; rideGrace = 0;
       controllers.forEach(c => c.prev = null);
@@ -2057,10 +2062,7 @@
       }
     });
     session.addEventListener('end', () => {
-      if (settingsOpen) setSettings(false);
-      else if (paused) togglePause(); // clean up cube hands
-      controllers.forEach(c => c.prev = null);
-      if (window.__vuShowStart) window.__vuShowStart();
+      location.reload(); // WebXR closed -> instant fresh page
     });
   };
 })();
