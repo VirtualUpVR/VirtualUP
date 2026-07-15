@@ -12,8 +12,8 @@
     display: flex; align-items: center; justify-content: center;
   }
   #startbox { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-  #roomrow { display: flex; align-items: center; gap: 10px; font: bold 20px Arial, sans-serif; color: #000; }
-  #roomcode {
+  #roomrow, .rrow { display: flex; align-items: center; gap: 10px; font: bold 20px Arial, sans-serif; color: #000; }
+  #roomcode, #playername {
     font: bold 22px monospace; text-transform: uppercase; text-align: center;
     border: 2px solid #000; border-radius: 6px; padding: 8px 12px; width: 170px;
   }
@@ -22,18 +22,22 @@
     border: 2px solid #000; border-radius: 8px; padding: 18px 48px; cursor: pointer;
   }
   #startvr:active { background: #eee; }
-  #versioninfo { font: 14px Arial, sans-serif; color: #666; }
+  #roomnote { font: 14px Arial, sans-serif; color: #666; }
 </style>
 </head>
 <body>
 <div id="startpage">
   <div id="startbox">
     <div id="roomrow">
+      <label for="playername">Name</label>
+      <input id="playername" maxlength="14" value="" placeholder="your name" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="roomrow2" class="rrow">
       <label for="roomcode">Room</label>
       <input id="roomcode" maxlength="12" value="PUBLIC" autocomplete="off" spellcheck="false">
     </div>
     <button id="startvr">Start VR</button>
-    <div id="versioninfo">Multiplayer Update - 2.0.2</div>
+    <div id="roomnote">Multiplayer Update - 2.1.0</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -1863,8 +1867,27 @@
   const net = {
     peer: null, isHost: false, conns: [], hostConn: null,
     others: new Map(), // id -> avatar
-    sendT: 0, status: 'offline', count: 1, room: 'PUBLIC'
+    sendT: 0, status: 'offline', count: 1, room: 'PUBLIC', name: 'GORILLA'
   };
+
+  function makeTag(name) {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(10,20,14,0.78)';
+    g.fillRect(0, 0, 256, 64);
+    g.strokeStyle = '#7F00FF'; g.lineWidth = 5;
+    g.strokeRect(3, 3, 250, 58);
+    g.fillStyle = '#ffffff'; g.font = 'bold 34px Trebuchet MS';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(String(name).slice(0, 14), 128, 34);
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(c), transparent: true, depthTest: false
+    }));
+    s.scale.set(0.55, 0.1375, 1);
+    s.renderOrder = 900;
+    return s;
+  }
 
   function makeAvatar() {
     const g = new THREE.Group();
@@ -1873,6 +1896,7 @@
     const rh = new THREE.Mesh(handGeo, handMat);
     g.add(head, lh, rh);
     g.head = head; g.lh = lh; g.rh = rh;
+    g.tag = null; g.name = '';
     // where they're smoothly moving toward (network updates arrive in chunks)
     g.tHead = new THREE.Vector3(); g.tL = new THREE.Vector3(); g.tR = new THREE.Vector3();
     scene.add(g);
@@ -1891,7 +1915,7 @@
     controllers[0].ball.getWorldPosition(_ml);
     controllers[1].ball.getWorldPosition(_mr);
     const r = v => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100];
-    return { h: r(_mh), l: r(_ml), r: r(_mr) };
+    return { h: r(_mh), l: r(_ml), r: r(_mr), n: net.name };
   }
   function applyState(id, s) {
     if (!s || !s.h) return;
@@ -1900,6 +1924,12 @@
     a.tHead.set(s.h[0], s.h[1], s.h[2]);
     a.tL.set(s.l[0], s.l[1], s.l[2]);
     a.tR.set(s.r[0], s.r[1], s.r[2]);
+    if (s.n && s.n !== a.name) { // name arrived or changed -> (re)build the tag
+      if (a.tag) a.remove(a.tag);
+      a.name = s.n;
+      a.tag = makeTag(s.n);
+      a.add(a.tag);
+    }
     a.seen = performance.now();
   }
   function lerpAvatars(dt) {
@@ -1909,6 +1939,10 @@
       a.head.position.lerp(a.tHead, k);
       a.lh.position.lerp(a.tL, k);
       a.rh.position.lerp(a.tR, k);
+      if (a.tag) { // nametag floats above the head, always facing you
+        a.tag.position.copy(a.head.position);
+        a.tag.position.y += 0.34;
+      }
       if (now - (a.seen || now) > 12000) removeAvatar(id); // gone quiet — drop them
     });
   }
@@ -2042,9 +2076,10 @@
   });
 
   // ---------- launch (called by the bootstrap once WebXR is granted) ----------
-  window.__vuLaunch = function (session, room) {
+  window.__vuLaunch = function (session, room, name) {
     initAudio();
     net.room = room || 'PUBLIC';
+    net.name = (name || 'GORILLA').slice(0, 14);
     startNetworking(net.room);
     renderer.xr.setReferenceSpaceType('local-floor');
     renderer.xr.setSession(session);
@@ -2086,8 +2121,20 @@
   const btn = document.getElementById('startvr');
   window.__vuShowStart = function () { page.style.display = 'flex'; };
   let launching = false;
+  try {
+    const n = localStorage.getItem('virtualup-name'); if (n) document.getElementById('playername').value = n;
+    const r = localStorage.getItem('virtualup-room'); if (r) document.getElementById('roomcode').value = r;
+  } catch (e) {}
   btn.addEventListener('click', function () {
     if (launching) return;
+    const nameEl = document.getElementById('playername');
+    const name = (nameEl.value || '').trim().slice(0, 14);
+    if (!name) { // a name is required to play
+      nameEl.style.borderColor = '#cc0000';
+      nameEl.placeholder = 'type a name first!';
+      nameEl.focus();
+      return;
+    }
     if (!navigator.xr) { btn.textContent = 'VR not available on this device'; return; }
     launching = true;
     btn.textContent = 'Starting…';
@@ -2098,7 +2145,8 @@
             if (!window.__vuLaunch) (0, eval)(document.getElementById('gamecode').textContent); // build the game NOW
             const room = (document.getElementById('roomcode').value || 'PUBLIC')
               .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'PUBLIC';
-            window.__vuLaunch(session, room);
+            try { localStorage.setItem('virtualup-name', name); localStorage.setItem('virtualup-room', room); } catch (e) {}
+            window.__vuLaunch(session, room, name);
             page.style.display = 'none';
             btn.textContent = 'Start VR';
           } catch (e) { showError(e.message); }
