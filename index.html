@@ -1824,6 +1824,7 @@
     }
   }
   function pollPauseButtons() {
+    if (dcOpen) { yWas = true; bWas = true; return; } // the disconnect dialog is modal
     const session = renderer.xr.getSession && renderer.xr.getSession();
     if (!session || !session.inputSources) return;
     let y = false, b = false, stickX = 0;
@@ -1951,6 +1952,13 @@
   }
 
   function netTick(dt) {
+    // watchdog: as a client, silence means the host is gone (page closed, headset
+    // died, Wi-Fi dropped) — PeerJS often never fires 'close' for those.
+    if (!net.isHost && !dcOpen && !net.leaving && net.status === 'connected' &&
+        net.lastPacket && performance.now() - net.lastPacket > 8000) {
+      showDisconnect();
+      return;
+    }
     net.sendT += dt;
     if (net.sendT < 1 / 15) return; // 15 updates a second
     net.sendT = 0;
@@ -1987,18 +1995,19 @@
       p.on('open', () => {
         const c = p.connect(hostId, { reliable: false });
         net.hostConn = c;
-        c.on('open', () => { net.status = 'connected'; });
+        c.on('open', () => { net.status = 'connected'; net.lastPacket = performance.now(); });
         c.on('data', d => {
+          net.lastPacket = performance.now(); // proof the host is still alive
           if (d && d.t === 'g') { recvGrab(d.from, d.hand, d.on); return; } // someone grabbed/threw you
           if (!d || d.t !== 'w') return;
           const seen = new Set();
           for (const id in d.p) { applyState(id, d.p[id]); seen.add(id); }
           net.others.forEach((a, id) => { if (!seen.has(id)) removeAvatar(id); });
         });
-        c.on('close', () => { net.status = 'host left'; net.others.forEach((a, id) => removeAvatar(id)); tryHost(); });
-        c.on('error', () => { net.status = 'error'; });
+        c.on('close', () => { if (!net.leaving) showDisconnect(); }); // the host vanished
+        c.on('error', () => { if (!net.leaving) showDisconnect(); }); // the pipe broke
       });
-      p.on('error', () => { net.status = 'error'; });
+      p.on('error', () => { if (!net.leaving) showDisconnect(); }); // couldn't reach the lobby
     }
 
     function tryHost() {
@@ -2007,6 +2016,7 @@
       p.on('open', () => {
         net.isHost = true;
         net.status = 'hosting';
+        p.on('disconnected', () => { try { if (!net.leaving) p.reconnect(); } catch (e) {} }); // broker hiccup — recover quietly
         p.on('connection', c => {
           net.conns.push(c);
           c.on('data', d => {
@@ -2034,7 +2044,7 @@
           try { p.destroy(); } catch (e) {}
           becomeClient();
         } else {
-          net.status = 'error';
+          if (!net.leaving) showDisconnect(); // fatal failure while hosting
         }
       });
     }
@@ -2125,6 +2135,113 @@
     }
   }
 
+  // ---------- disconnect notice (in-VR) ----------
+  // Shown when you lose the lobby: the host vanished, or your connection dropped.
+  // Rejoin = try the same room again. Quit = end VR and refresh the page.
+  let dcOpen = false, dcPausedIt = false, dcHover = -1;
+  const dcTrigWas = [false, false];
+  const dcCvs = document.createElement('canvas');
+  dcCvs.width = 512; dcCvs.height = 300;
+  const dcCtx = dcCvs.getContext('2d');
+  const dcTex = new THREE.CanvasTexture(dcCvs);
+  const dcPanel = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.9, 0.527),
+    new THREE.MeshBasicMaterial({ map: dcTex, depthTest: false })
+  );
+  dcPanel.renderOrder = 1010; // above everything
+  dcPanel.position.set(0, 0, -1.2);
+  const DC_REJOIN = { x: 46, y: 186, w: 190, h: 62 };
+  const DC_QUIT   = { x: 276, y: 186, w: 190, h: 62 };
+  function drawDisconnect() {
+    const g = dcCtx;
+    g.fillStyle = '#1a0f12'; g.fillRect(0, 0, 512, 300);
+    g.strokeStyle = '#e63946'; g.lineWidth = 6; g.strokeRect(6, 6, 500, 288);
+    g.textAlign = 'center';
+    g.fillStyle = '#ffffff'; g.font = 'bold 30px Trebuchet MS';
+    g.fillText('You Have Disconnected', 256, 88);
+    g.fillText('From The Lobby.', 256, 126);
+    const btn = (b, label, hov, base, edge) => {
+      g.fillStyle = hov ? base[1] : base[0];
+      g.fillRect(b.x, b.y, b.w, b.h);
+      g.strokeStyle = hov ? '#ffd23f' : edge;
+      g.lineWidth = hov ? 5 : 3;
+      g.strokeRect(b.x, b.y, b.w, b.h);
+      g.fillStyle = '#ffffff'; g.font = 'bold 30px Trebuchet MS';
+      g.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 11);
+    };
+    btn(DC_REJOIN, 'Rejoin', dcHover === 0, ['#1e5c3a', '#2c7a44'], '#57cc57');
+    btn(DC_QUIT,   'Quit',   dcHover === 1, ['#5c1010', '#a01818'], '#ff8080');
+    g.fillStyle = '#c9a0a6'; g.font = '18px Trebuchet MS';
+    g.fillText('room ' + net.room + ' — point and pull the trigger', 256, 278);
+    dcTex.needsUpdate = true;
+  }
+  function showDisconnect() {
+    if (dcOpen) return;
+    dcOpen = true;
+    dcHover = -1;
+    net.status = 'disconnected';
+    net.others.forEach((a, id) => removeAvatar(id)); // clear ghost players
+    drawDisconnect();
+    camera.add(dcPanel);
+    controllers.forEach(h => h.ctrl.add(h.laser));
+    if (!paused) { dcPausedIt = true; togglePause(); } else dcPausedIt = false;
+    pulseHaptic(0, 2); pulseHaptic(1, 2);
+  }
+  function hideDisconnect() {
+    if (!dcOpen) return;
+    dcOpen = false;
+    camera.remove(dcPanel);
+    controllers.forEach(h => h.ctrl.remove(h.laser));
+    if (dcPausedIt && paused) togglePause();
+  }
+  function doRejoin() {
+    hideDisconnect();
+    net.leaving = true; // teardown noise must not re-trigger the notice
+    try { if (net.peer) net.peer.destroy(); } catch (e) {}
+    net.peer = null; net.hostConn = null; net.conns = [];
+    net.isHost = false; net.count = 1; net.lastPacket = 0;
+    net.others.forEach((a, id) => removeAvatar(id));
+    setTimeout(() => {
+      net.leaving = false;
+      startNetworking(net.room); // same room, fresh attempt
+    }, 600); // let the old peer die completely first
+  }
+  function doQuit() {
+    net.leaving = true;
+    const session = renderer.xr.getSession && renderer.xr.getSession();
+    if (session) { try { session.end(); return; } catch (e) {} } // 'end' handler reloads the page
+    location.reload();
+  }
+  function updateDcPointer() {
+    const session = renderer.xr.getSession && renderer.xr.getSession();
+    if (!session || !session.inputSources) return;
+    let hover = -1;
+    for (let i = 0; i < controllers.length; i++) {
+      const src = session.inputSources[i];
+      const gp = src && src.gamepad;
+      const trig = !!(gp && gp.buttons && gp.buttons[0] && gp.buttons[0].pressed);
+      const ctrl = controllers[i].ctrl;
+      ctrl.getWorldPosition(_rayO);
+      ctrl.getWorldQuaternion(_rayQ);
+      _rayD.set(0, 0, -1).applyQuaternion(_rayQ);
+      raycaster.set(_rayO, _rayD);
+      const hit = raycaster.intersectObject(dcPanel, false)[0];
+      if (hit && hit.uv) {
+        const cx = hit.uv.x * 512, cy = (1 - hit.uv.y) * 300;
+        const on = b => cx > b.x && cx < b.x + b.w && cy > b.y && cy < b.y + b.h;
+        if (on(DC_REJOIN)) {
+          hover = 0;
+          if (trig && !dcTrigWas[i]) { dcTrigWas[i] = trig; doRejoin(); return; }
+        } else if (on(DC_QUIT)) {
+          hover = 1;
+          if (trig && !dcTrigWas[i]) { dcTrigWas[i] = trig; doQuit(); return; }
+        }
+      }
+      dcTrigWas[i] = trig;
+    }
+    if (hover !== dcHover) { dcHover = hover; drawDisconnect(); }
+  }
+
   // ---------- main loop ----------
   const clock = new THREE.Clock();
   let gameT = 0; // game time stands still while paused, so movers resume exactly where they froze
@@ -2132,8 +2249,9 @@
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (renderer.xr.isPresenting) { netTick(dt); lerpAvatars(dt); }
-    if (renderer.xr.isPresenting && !paused && !tp) { pollGrabs(dt); applyGrabDrag(dt); }
+    if (renderer.xr.isPresenting && !paused && !tp && !dcOpen) { pollGrabs(dt); applyGrabDrag(dt); }
     if (renderer.xr.isPresenting) pollPauseButtons();
+    if (renderer.xr.isPresenting && dcOpen) updateDcPointer();
     if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
     if (!paused) {
       gameT += dt;
