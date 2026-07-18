@@ -1903,6 +1903,9 @@
     return g;
   }
   function removeAvatar(id) {
+    if (grab.by === id) grab.by = null; // grabber left — no fling
+    if (myGrabs[0] === id) myGrabs[0] = null;
+    if (myGrabs[1] === id) myGrabs[1] = null;
     const a = net.others.get(id);
     if (a) { scene.remove(a); net.others.delete(id); }
     net.count = 1 + net.others.size;
@@ -1986,6 +1989,7 @@
         net.hostConn = c;
         c.on('open', () => { net.status = 'connected'; });
         c.on('data', d => {
+          if (d && d.t === 'g') { recvGrab(d.from, d.hand, d.on); return; } // someone grabbed/threw you
           if (!d || d.t !== 'w') return;
           const seen = new Set();
           for (const id in d.p) { applyState(id, d.p[id]); seen.add(id); }
@@ -2005,7 +2009,17 @@
         net.status = 'hosting';
         p.on('connection', c => {
           net.conns.push(c);
-          c.on('data', d => { if (d && d.t === 'm') applyState(c.peer, d.s); });
+          c.on('data', d => {
+            if (d && d.t === 'm') { applyState(c.peer, d.s); return; }
+            if (d && d.t === 'g') { // grab traffic: for me, or relayed to its target
+              if (d.to === 'host') recvGrab(c.peer, d.hand, d.on);
+              else for (const c2 of net.conns) {
+                if (c2.peer === d.to && c2.open) {
+                  try { c2.send({ t: 'g', from: c.peer, hand: d.hand, on: d.on }); } catch (e) {}
+                }
+              }
+            }
+          });
           const drop = () => {
             net.conns = net.conns.filter(x => x !== c);
             removeAvatar(c.peer);
@@ -2027,6 +2041,90 @@
     tryHost();
   }
 
+  // ---------- GRABBING OTHER PLAYERS ----------
+  // Squeeze GRIP with your hand touching another player's hand to grab them.
+  // Your hand becomes their anchor: swing your arm and their whole body follows.
+  // Let go mid-swing and they inherit the momentum — a genuine throw.
+  const myGrabs = [null, null];            // per hand: id of the player I'm holding
+  const grab = { by: null, hand: 0, prev: null, vel: new THREE.Vector3() }; // being held
+  const gripWas = [false, false];
+  const _gA = new THREE.Vector3(), _gB = new THREE.Vector3(), _gD = new THREE.Vector3();
+
+  function sendGrab(to, hand, on) {
+    const msg = { t: 'g', to: to, hand: hand, on: on ? 1 : 0 };
+    if (net.isHost) {
+      msg.from = 'host';
+      for (const c of net.conns) if (c.peer === to && c.open) { try { c.send(msg); } catch (e) {} }
+    } else if (net.hostConn && net.hostConn.open) {
+      try { net.hostConn.send(msg); } catch (e) {}
+    }
+  }
+  function recvGrab(from, hand, on) {
+    if (on) {
+      if (!grab.by || grab.by === from) { // one grab at a time
+        grab.by = from;
+        grab.hand = hand;
+        grab.prev = null;
+        grab.vel.set(0, 0, 0);
+        pulseHaptic(0, 2); pulseHaptic(1, 2); // you FEEL being caught
+      }
+    } else if (grab.by === from) {
+      // THROWN: fly with the anchor's momentum
+      grab.by = null;
+      if (grab.vel.length() > 12) grab.vel.setLength(12);
+      velocity.copy(grab.vel);
+      controllers.forEach(c => c.prev = null); // don't let hand-pins cancel the fling
+      pulseHaptic(0, 3); pulseHaptic(1, 3);
+    }
+  }
+  function applyGrabDrag(dt) {
+    if (!grab.by) return;
+    const a = net.others.get(grab.by);
+    if (!a) { grab.by = null; return; } // grabber vanished — quietly let go
+    _gA.copy(grab.hand === 0 ? a.lh.position : a.rh.position); // their grabbing hand
+    if (grab.prev) {
+      _gD.subVectors(_gA, grab.prev);
+      if (_gD.length() > 0.5) _gD.setLength(0.5); // desync safety cap
+      rig.position.add(_gD);                       // dragged by the arm
+      _gB.copy(_gD).divideScalar(Math.max(dt, 1 / 120));
+      grab.vel.lerp(_gB, 0.5);                     // smoothed for the throw
+    } else {
+      grab.prev = new THREE.Vector3();
+    }
+    grab.prev.copy(_gA);
+  }
+  function pollGrabs(dt) {
+    const session = renderer.xr.getSession && renderer.xr.getSession();
+    if (!session || !session.inputSources) return;
+    for (let i = 0; i < controllers.length; i++) {
+      const src = session.inputSources[i];
+      const gp = src && src.gamepad;
+      const grip = !!(gp && gp.buttons && gp.buttons[1] && gp.buttons[1].pressed); // squeeze
+      if (grip && !gripWas[i] && !myGrabs[i]) {
+        // fresh squeeze: is my hand touching someone else's hand?
+        controllers[i].ball.getWorldPosition(_gA);
+        let bestId = null, bestD = 0.22; // grab reach
+        net.others.forEach((a, id) => {
+          const dl = _gA.distanceTo(a.lh.position);
+          const dr = _gA.distanceTo(a.rh.position);
+          const d = Math.min(dl, dr);
+          if (d < bestD) { bestD = d; bestId = id; }
+        });
+        if (bestId) {
+          myGrabs[i] = bestId;
+          sendGrab(bestId, i, 1);
+          pulseHaptic(i, 2.5); // you feel the catch
+        }
+      } else if (!grip && gripWas[i] && myGrabs[i]) {
+        sendGrab(myGrabs[i], i, 0); // release = throw
+        myGrabs[i] = null;
+      } else if (myGrabs[i] && !net.others.get(myGrabs[i])) {
+        myGrabs[i] = null; // they left
+      }
+      gripWas[i] = grip;
+    }
+  }
+
   // ---------- main loop ----------
   const clock = new THREE.Clock();
   let gameT = 0; // game time stands still while paused, so movers resume exactly where they froze
@@ -2034,6 +2132,7 @@
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (renderer.xr.isPresenting) { netTick(dt); lerpAvatars(dt); }
+    if (renderer.xr.isPresenting && !paused && !tp) { pollGrabs(dt); applyGrabDrag(dt); }
     if (renderer.xr.isPresenting) pollPauseButtons();
     if (renderer.xr.isPresenting && settingsOpen) updateSettingsPointer();
     if (!paused) {
