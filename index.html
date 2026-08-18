@@ -37,7 +37,7 @@
       <input id="roomcode" maxlength="12" value="PUBLIC" autocomplete="off" spellcheck="false">
     </div>
     <button id="startvr">Start VR</button>
-    <div id="roomnote">VirtualUP Version 2.1.0</div>
+    <div id="roomnote">VirtualUP Version 3.0.0 BETA. For Testing Purposes Only.</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -2084,16 +2084,9 @@
     renderer.xr.setSession(session);
     camera.position.set(0, 0, 0); // hand control back to the headset
     showSplash();
-    // Meta menu opens -> auto-pause. Menu closes -> resume with hand history
-    // wiped, so exiting the menu can never fling you off the map.
-    let autoPaused = false;
+    // Meta menu opens -> refresh the whole page immediately for a clean restart.
     session.addEventListener('visibilitychange', () => {
-      if (session.visibilityState !== 'visible') {
-        if (!paused) { autoPaused = true; togglePause(); }
-      } else {
-        controllers.forEach(c => { c.prev = null; c.wasTouching = false; });
-        if (autoPaused) { autoPaused = false; togglePause(); }
-      }
+      if (session.visibilityState !== 'visible') location.reload();
     });
     session.addEventListener('end', () => {
       location.reload(); // WebXR closed -> instant fresh page
@@ -2196,3 +2189,4 @@
 </script>
 </body>
 </html>
+
