@@ -37,7 +37,7 @@
       <input id="roomcode" maxlength="12" value="PUBLIC" autocomplete="off" spellcheck="false">
     </div>
     <button id="startvr">Start VR</button>
-    <div id="roomnote">VirtualUP Version 3.0.0 - Hand Tracking</div>
+    <div id="roomnote">VirtualUP Version 3.0.1</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -2169,7 +2169,7 @@
         .catch(function () {
           // the browser wants a fresh tap now that loading is done
           launching = false;
-          btn.textContent = 'Error. Browser Is Not Supported.';
+          btn.textContent = 'Ready — tap to enter VR';
         });
     }
 
