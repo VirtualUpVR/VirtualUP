@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>VirtualUP</title>
-<link rel="icon" type="image/png" href="icon.png">
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -1891,9 +1890,39 @@
     return s;
   }
 
+  // the face: ":]" tipped on its side — the colon becomes two eyes on top,
+  // the bracket becomes the smile. One shared texture for every player.
+  const faceTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 128;
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, 128, 128);
+    g.translate(64, 64);
+    g.rotate(Math.PI / 2); // rotate ":]" -> eyes over a smile
+    g.fillStyle = '#000000';
+    g.font = 'bold 92px monospace';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(':]', 0, 6);
+    return new THREE.CanvasTexture(c);
+  })();
+
+  function makeFace() {
+    const f = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.22, 0.22),
+      new THREE.MeshBasicMaterial({ map: faceTex, transparent: true })
+    );
+    f.position.z = -0.165;  // just outside the head sphere (r = 0.16), on its -Z "forward" side
+    f.rotation.y = Math.PI; // plane faces outward, same way the head looks
+    return f;
+  }
+
+  // NOTE: only OTHER players get an avatar built — the local player has no head
+  // mesh at all, so you can never see your own face. Only everyone else can.
   function makeAvatar() {
     const g = new THREE.Group();
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), handMat);
+    head.rotation.order = 'YXZ'; // yaw then pitch, matching how we read the camera
+    head.add(makeFace());
     const lh = new THREE.Mesh(handGeo, handMat);
     const rh = new THREE.Mesh(handGeo, handMat);
     g.add(head, lh, rh);
@@ -1901,6 +1930,7 @@
     g.tag = null; g.name = '';
     // where they're smoothly moving toward (network updates arrive in chunks)
     g.tHead = new THREE.Vector3(); g.tL = new THREE.Vector3(); g.tR = new THREE.Vector3();
+    g.tYaw = 0; g.tPitch = 0; // which way their face should point
     scene.add(g);
     return g;
   }
@@ -1910,14 +1940,18 @@
     net.count = 1 + net.others.size;
   }
 
-  // my state: head + both hands, in world space
+  // my state: head + both hands, in world space (+ which way my head points)
   const _mh = new THREE.Vector3(), _ml = new THREE.Vector3(), _mr = new THREE.Vector3();
+  const _mq = new THREE.Quaternion(), _meu = new THREE.Euler(0, 0, 0, 'YXZ');
   function myState() {
     camera.getWorldPosition(_mh);
+    camera.getWorldQuaternion(_mq);
+    _meu.setFromQuaternion(_mq); // YXZ -> .y is yaw, .x is pitch
     controllers[0].ball.getWorldPosition(_ml);
     controllers[1].ball.getWorldPosition(_mr);
     const r = v => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100];
-    return { h: r(_mh), l: r(_ml), r: r(_mr), n: net.name };
+    return { h: r(_mh), l: r(_ml), r: r(_mr), n: net.name,
+             o: [Math.round(_meu.y * 100) / 100, Math.round(_meu.x * 100) / 100] };
   }
   function applyState(id, s) {
     if (!s || !s.h) return;
@@ -1926,6 +1960,7 @@
     a.tHead.set(s.h[0], s.h[1], s.h[2]);
     a.tL.set(s.l[0], s.l[1], s.l[2]);
     a.tR.set(s.r[0], s.r[1], s.r[2]);
+    if (s.o) { a.tYaw = s.o[0]; a.tPitch = s.o[1]; }
     if (s.n && s.n !== a.name) { // name arrived or changed -> (re)build the tag
       if (a.tag) a.remove(a.tag);
       a.name = s.n;
@@ -1934,11 +1969,20 @@
     }
     a.seen = performance.now();
   }
+  // shortest-way-around blend for angles, so heads never spin the long way past ±180°
+  function lerpAngle(a, b, t) {
+    let d = (b - a) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return a + d * t;
+  }
   function lerpAvatars(dt) {
     const k = Math.min(dt * 14, 1); // smooth between network updates
     const now = performance.now();
     net.others.forEach((a, id) => {
       a.head.position.lerp(a.tHead, k);
+      a.head.rotation.y = lerpAngle(a.head.rotation.y, a.tYaw, k);
+      a.head.rotation.x += (a.tPitch - a.head.rotation.x) * k;
       a.lh.position.lerp(a.tL, k);
       a.rh.position.lerp(a.tR, k);
       if (a.tag) { // nametag floats above the head, always facing you
@@ -1960,7 +2004,7 @@
       net.others.forEach((a, id) => {
         world.p[id] = { h: [a.tHead.x, a.tHead.y, a.tHead.z],
                         l: [a.tL.x, a.tL.y, a.tL.z], r: [a.tR.x, a.tR.y, a.tR.z],
-                        n: a.name };
+                        n: a.name, o: [a.tYaw, a.tPitch] };
       });
       for (const c of net.conns) {
         if (!c.open) continue;
