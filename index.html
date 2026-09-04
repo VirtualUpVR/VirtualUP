@@ -39,7 +39,7 @@
     </div>
     <button id="startvr">Start VR</button>
     <a href="https://discord.gg/eehKXCfCUj">Discord</a>
-    <div id="roomnote">VirtualUP Version 4.0.0 - ?</div>
+    <div id="roomnote">VirtualUP Version 3.2.0 - Better Hands Update</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -1465,6 +1465,63 @@
                        prev: null, wasTouching: false, offTime: 1, cool: 0 });
   }
 
+  // ---------- the watchers: red player models that stare at you from spawn ----------
+  // Same body as a real player (pixel head + two knuckle-hands) but red, with
+  // eyes. Decorative only: no collision, no networking. Every frame the body
+  // turns toward you and the head locks onto yours — wherever you climb.
+  const redMat = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 16;
+    const g = c.getContext('2d');
+    const shades = ['#8b0000', '#a30000', '#b80000', '#cc0000', '#d81a1a', '#e63030'];
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      g.fillStyle = shades[Math.random() * shades.length | 0];
+      g.fillRect(x, y, 1, 1);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    return new THREE.MeshLambertMaterial({ color: 0xffffff, map: t });
+  })();
+  const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const eyePupilMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const eyeGeo = new THREE.SphereGeometry(0.038, 8, 6);
+  const pupilGeo = new THREE.SphereGeometry(0.017, 6, 5);
+  const watchers = [];
+  function addWatcher(x, z) {
+    const g = new THREE.Group();
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), redMat);
+    head.position.set(0, 1.15, 0);
+    // eyes sit on the head's +Z face — Object3D.lookAt() turns +Z toward the target
+    for (const s of [-0.06, 0.06]) {
+      const w = new THREE.Mesh(eyeGeo, eyeWhiteMat); w.position.set(s, 0.03, 0.135);
+      const p = new THREE.Mesh(pupilGeo, eyePupilMat); p.position.set(s, 0.03, 0.163);
+      head.add(w, p);
+    }
+    // knuckles on the ground, gorilla-style
+    const lh = new THREE.Mesh(handGeo, redMat); lh.position.set(-0.4, HAND_R + 0.02, 0.15);
+    const rh = new THREE.Mesh(handGeo, redMat); rh.position.set(0.4, HAND_R + 0.02, 0.15);
+    g.add(head, lh, rh);
+    g.position.set(x, 0, z);
+    scene.add(g);
+    watchers.push({ g, head });
+  }
+  // a loose ring around the spawn point (0, 6) — two right in front of you
+  addWatcher(1.8, 3.6);  addWatcher(-1.8, 3.6);
+  addWatcher(3.8, 6.5);  addWatcher(-3.8, 6.5);
+  addWatcher(2.2, 9.2);  addWatcher(-2.2, 9.2);
+  addWatcher(0, 10.5);
+  const _stare = new THREE.Vector3();
+  function updateWatchers() {
+    camera.getWorldPosition(_stare);
+    for (const w of watchers) {
+      w.g.rotation.y = Math.atan2(_stare.x - w.g.position.x, _stare.z - w.g.position.z); // body faces you
+      w.head.lookAt(_stare);                                                                // eyes lock on
+    }
+  }
+
   // ---------- physics helpers ----------
   const velocity = new THREE.Vector3();
   let rideMover = null, rideGrace = 0; // sticky riding: movers can't slide out from under you
@@ -2073,6 +2130,7 @@
         if (splashT <= 0) camera.remove(splash);
       }
     }
+    updateWatchers(); // they never stop staring — not even while you're paused
     renderer.render(scene, camera);
   });
 
