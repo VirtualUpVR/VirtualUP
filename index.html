@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VirtualUP</title>
+<title>???</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0a1a12; height: 100%; }
   canvas { display: block; }
@@ -75,13 +75,13 @@
   document.body.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87c5e8);
-  scene.fog = new THREE.Fog(0x87c5e8, 30, 170);
+  scene.background = new THREE.Color(0xc4352b);
+  scene.fog = new THREE.Fog(0xc4352b, 30, 170);
 
   const sun = new THREE.DirectionalLight(0xfff3d6, 1.0);
   sun.position.set(20, 60, 10);
   scene.add(sun);
-  const hemi = new THREE.HemisphereLight(0xbfe8ff, 0x2c5232, 0.85);
+  const hemi = new THREE.HemisphereLight(0xffb0a0, 0x2c5232, 0.85);
   scene.add(hemi);
 
   const camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.05, 210); // fog ends at 170 — no point drawing past it
@@ -1233,8 +1233,8 @@
   // ---------- SPACE VISUALS ----------
   // The space look belongs to the space MAP now, not to altitude:
   // purple void, stars out, sun dimmed, every platform glowing.
-  const skyCol = new THREE.Color(0x87c5e8);
-  const spaceCol = new THREE.Color(0x241048);
+  const skyCol = new THREE.Color(0xc4352b);
+  const spaceCol = new THREE.Color(0x3a0a0a);
 
   // star field rides with the player like a distant sky sphere
   const starMat = new THREE.PointsMaterial({
