@@ -23,6 +23,7 @@
   }
   #startvr:active { background: #eee; }
   #roomnote { font: 14px Arial, sans-serif; color: #666; }
+  #iprow { font: 12px monospace; color: #999; min-height: 14px; }
 </style>
 </head>
 <body>
@@ -38,7 +39,8 @@
     </div>
     <button id="startvr">Start VR</button>
     <a href="https://discord.gg/eehKXCfCUj">Discord</a>
-    <div id="roomnote">VirtualUP Version 4.0.0</div>
+    <div id="roomnote">VirtualUP Version 3.3.0</div>
+    <div id="iprow">checking IP…</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -1429,12 +1431,11 @@
   const HAND_R = 0.09;
   const ARM_SCALE = 1.5; // gorilla arms: hand reach is amplified from the head, like Gorilla Tag
   const handGeo = new THREE.SphereGeometry(HAND_R, 12, 10);
-  // purple pixel-art hand texture
-  const handMat = (() => {
+  // pixel-art skin texture in a given set of shades (purple by default, blue for VIPs)
+  function makeSkin(shades) {
     const c = document.createElement('canvas');
     c.width = c.height = 16;
     const g = c.getContext('2d');
-    const shades = ['#5c00b8', '#6a00d6', '#7500ec', '#7F00FF', '#8d1aff', '#9c3dff'];
     for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
       g.fillStyle = shades[Math.random() * shades.length | 0];
       g.fillRect(x, y, 1, 1);
@@ -1445,7 +1446,17 @@
     t.minFilter = THREE.NearestFilter;
     t.generateMipmaps = false;
     return new THREE.MeshLambertMaterial({ color: 0xffffff, map: t });
-  })();
+  }
+  const handMat = makeSkin(['#5c00b8', '#6a00d6', '#7500ec', '#7F00FF', '#8d1aff', '#9c3dff']);
+  const blueMat = makeSkin(['#0033b8', '#0040d6', '#0047ec', '#0050ff', '#1a63ff', '#3d7cff']);
+
+  // ---------- special colors ----------
+  // The start page (bootstrap at the bottom of this file) checks the player's
+  // public IP against BLUE_IPS. A match saves a 'virtualup-blue' flag in
+  // localStorage, and THAT flag is what makes them blue — their own hands here,
+  // and their whole avatar on everyone else's screen via the network.
+  let isBlue = false;
+  try { isBlue = localStorage.getItem('virtualup-blue') === '1'; } catch (e) {}
   // a plain cube, shown in each hand only while paused
   function makePauseCube() {
     return new THREE.Mesh(
@@ -1458,11 +1469,16 @@
   for (let i = 0; i < 2; i++) {
     const c = renderer.xr.getController(i);
     rig.add(c);
-    const ball = new THREE.Mesh(handGeo, handMat);
+    const ball = new THREE.Mesh(handGeo, isBlue ? blueMat : handMat);
     rig.add(ball);
     controllers.push({ ctrl: c, ball: ball, model: makePauseCube(),
                        prev: null, wasTouching: false, offTime: 1, cool: 0 });
   }
+  // the start page calls this if the IP check only finishes after the game is built
+  window.__vuSetBlue = function () {
+    isBlue = true;
+    for (const c of controllers) c.ball.material = blueMat;
+  };
 
   // ---------- physics helpers ----------
   const velocity = new THREE.Vector3();
@@ -1931,6 +1947,8 @@
     // where they're smoothly moving toward (network updates arrive in chunks)
     g.tHead = new THREE.Vector3(); g.tL = new THREE.Vector3(); g.tR = new THREE.Vector3();
     g.tYaw = 0; g.tPitch = 0; // which way their face should point
+    g.blue = false;           // wearing the blue skin?
+    g.color = 0; // 0 = purple, 1 = blue
     scene.add(g);
     return g;
   }
@@ -1950,7 +1968,7 @@
     controllers[0].ball.getWorldPosition(_ml);
     controllers[1].ball.getWorldPosition(_mr);
     const r = v => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100];
-    return { h: r(_mh), l: r(_ml), r: r(_mr), n: net.name,
+    return { h: r(_mh), l: r(_ml), r: r(_mr), n: net.name, b: isBlue ? 1 : 0,
              o: [Math.round(_meu.y * 100) / 100, Math.round(_meu.x * 100) / 100] };
   }
   function applyState(id, s) {
@@ -1961,6 +1979,12 @@
     a.tL.set(s.l[0], s.l[1], s.l[2]);
     a.tR.set(s.r[0], s.r[1], s.r[2]);
     if (s.o) { a.tYaw = s.o[0]; a.tPitch = s.o[1]; }
+    const blue = !!s.b;
+    if (blue !== a.blue) { // skin changed -> recolor head + both hands
+      a.blue = blue;
+      const m = blue ? blueMat : handMat;
+      a.head.material = m; a.lh.material = m; a.rh.material = m;
+    }
     if (s.n && s.n !== a.name) { // name arrived or changed -> (re)build the tag
       if (a.tag) a.remove(a.tag);
       a.name = s.n;
@@ -2004,7 +2028,7 @@
       net.others.forEach((a, id) => {
         world.p[id] = { h: [a.tHead.x, a.tHead.y, a.tHead.z],
                         l: [a.tL.x, a.tL.y, a.tL.z], r: [a.tR.x, a.tR.y, a.tR.z],
-                        n: a.name, o: [a.tYaw, a.tPitch] };
+                        n: a.name, o: [a.tYaw, a.tPitch], b: a.blue ? 1 : 0 };
       });
       for (const c of net.conns) {
         if (!c.open) continue;
@@ -2170,6 +2194,35 @@
     const n = localStorage.getItem('virtualup-name'); if (n) document.getElementById('playername').value = n;
     const r = localStorage.getItem('virtualup-room'); if (r) document.getElementById('roomcode').value = r;
   } catch (e) {}
+
+  // ---- blue check ----
+  // Runs the moment the page opens. If the player's public IP is in this list,
+  // a 'virtualup-blue' flag is saved in localStorage; the game reads that flag
+  // and turns them blue for themselves and everyone else. The flag sticks, so
+  // once matched they stay blue even on other networks.
+  // NOTE: a browser can only see your PUBLIC IP (what the internet sees), never
+  // a Wi-Fi address like 192.168.x.x. The start page prints the IP it actually
+  // sees — copy that one into this list.
+  const BLUE_IPS = ['72.222.251.197'];
+  (function checkIP() {
+    const ipEl = document.getElementById('iprow');
+    const ctl = new AbortController();
+    const timer = setTimeout(function () { ctl.abort(); }, 5000);
+    fetch('https://api.ipify.org?format=json', { signal: ctl.signal })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        clearTimeout(timer);
+        const ip = String(j.ip || '');
+        window.__vuPublicIP = ip;
+        const blue = BLUE_IPS.indexOf(ip) >= 0;
+        if (blue) {
+          try { localStorage.setItem('virtualup-blue', '1'); } catch (e) {}
+          if (window.__vuSetBlue) window.__vuSetBlue(); // game already built? recolor live
+        }
+        ipEl.textContent = 'your IP: ' + ip + (blue ? '  (blue!)' : '');
+      })
+      .catch(function () { clearTimeout(timer); ipEl.textContent = ''; });
+  })();
 
   let launching = false, gameReady = false;
   function loadLibs(done, fail) {
