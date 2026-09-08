@@ -38,7 +38,7 @@
     </div>
     <button id="startvr">Start VR</button>
     <a href="https://discord.gg/eehKXCfCUj">Discord</a>
-    <div id="roomnote">VirtualUP Version 5.0.0 - Voice Update</div>
+    <div id="roomnote">VirtualUP Version 4.0.0</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -1384,12 +1384,9 @@
   }
 
   let masterVolume = 1; // adjustable in the Y-button settings menu
-  let micOn = true;     // voice-chat microphone, togglable in the same menu
   // settings persist between play sessions (localStorage; silently skipped if unavailable)
   function saveSettings() {
-    try { localStorage.setItem('virtualup-settings', JSON.stringify({ volume: masterVolume, haptics: hapticsOn, mic: micOn })); } catch (e) {}
-    applyMicState();    // settings changed -> mic + voice volume follow immediately
-    applyVoiceVolume();
+    try { localStorage.setItem('virtualup-settings', JSON.stringify({ volume: masterVolume, haptics: hapticsOn })); } catch (e) {}
   }
   (function loadSettings() {
     try {
@@ -1398,7 +1395,6 @@
         masterVolume = s.volume;
       }
       if (s && typeof s.haptics === 'boolean') hapticsOn = s.haptics;
-      if (s && typeof s.mic === 'boolean') micOn = s.mic;
     } catch (e) {}
   })();
   function playHit(strength) {
@@ -1645,10 +1641,9 @@
   setCvs.width = 512; setCvs.height = 400;
   const setCtx = setCvs.getContext('2d');
   const setTex = new THREE.CanvasTexture(setCvs);
-  let hoverVol = false, hoverHap = false, hoverMic = false;
+  let hoverVol = false, hoverHap = false;
   const VOL_BAR = { x: 76, y: 142, w: 360, h: 34 };
-  const HAP_BTN = { x: 66, y: 288, w: 140, h: 52 };   // left column
-  const MIC_BTN = { x: 306, y: 288, w: 140, h: 52 };  // right column
+  const HAP_BTN = { x: 186, y: 288, w: 140, h: 52 };
   function drawSettings() {
     const g = setCtx;
     g.fillStyle = '#10251a'; g.fillRect(0, 0, 512, 400);
@@ -1665,26 +1660,14 @@
     g.fillStyle = masterVolume === 1000 ? '#ff5a5a' : '#ffd23f'; g.font = 'bold 24px Trebuchet MS';
     g.fillText(masterVolume === 1000 ? '1,000' : Math.round(masterVolume * 100) + '%', 256, 208);
     g.fillStyle = '#d8f0dd'; g.font = 'bold 26px Trebuchet MS';
-    g.fillText('Haptics', HAP_BTN.x + HAP_BTN.w / 2, 266);
-    g.fillText('Mic', MIC_BTN.x + MIC_BTN.w / 2, 266);
-    // haptics toggle (left)
+    g.fillText('Haptics', 256, 266);
     g.fillStyle = hapticsOn ? '#1e5c3a' : '#3a3a3a';
     g.fillRect(HAP_BTN.x, HAP_BTN.y, HAP_BTN.w, HAP_BTN.h);
     g.strokeStyle = hoverHap ? '#ffd23f' : (hapticsOn ? '#57cc57' : '#888888');
     g.lineWidth = hoverHap ? 5 : 3;
     g.strokeRect(HAP_BTN.x, HAP_BTN.y, HAP_BTN.w, HAP_BTN.h);
     g.fillStyle = hapticsOn ? '#aef0be' : '#bbbbbb'; g.font = 'bold 30px Trebuchet MS';
-    g.fillText(hapticsOn ? 'ON' : 'OFF', HAP_BTN.x + HAP_BTN.w / 2, 324);
-    // mic toggle (right) — shows BLOCKED if the browser refused the microphone
-    const micUp = voice.micAvailable;
-    g.fillStyle = !micUp ? '#4a1e24' : (micOn ? '#1e5c3a' : '#3a3a3a');
-    g.fillRect(MIC_BTN.x, MIC_BTN.y, MIC_BTN.w, MIC_BTN.h);
-    g.strokeStyle = hoverMic ? '#ffd23f' : (micUp && micOn ? '#57cc57' : '#888888');
-    g.lineWidth = hoverMic ? 5 : 3;
-    g.strokeRect(MIC_BTN.x, MIC_BTN.y, MIC_BTN.w, MIC_BTN.h);
-    g.fillStyle = !micUp ? '#ff8a8a' : (micOn ? '#aef0be' : '#bbbbbb');
-    g.font = !micUp ? 'bold 22px Trebuchet MS' : 'bold 30px Trebuchet MS';
-    g.fillText(!micUp ? 'BLOCKED' : (micOn ? 'ON' : 'OFF'), MIC_BTN.x + MIC_BTN.w / 2, 324);
+    g.fillText(hapticsOn ? 'ON' : 'OFF', 256, 324);
     g.fillStyle = '#7fae8c'; g.font = '18px Trebuchet MS';
     g.fillText('laser + trigger to change · stick also adjusts volume · Y to close', 256, 372);
     setTex.needsUpdate = true;
@@ -1727,7 +1710,7 @@
   function updateSettingsPointer() {
     const session = renderer.xr.getSession && renderer.xr.getSession();
     if (!session || !session.inputSources) return;
-    let hv = false, hh = false, hm = false, changed = false;
+    let hv = false, hh = false, changed = false;
     for (let i = 0; i < controllers.length; i++) {
       const src = session.inputSources[i];
       const gp = src && src.gamepad;
@@ -1742,10 +1725,8 @@
         const cx = hit.uv.x * 512, cy = (1 - hit.uv.y) * 400;
         const onVol = cx > VOL_BAR.x - 12 && cx < VOL_BAR.x + VOL_BAR.w + 12 && cy > VOL_BAR.y - 14 && cy < VOL_BAR.y + VOL_BAR.h + 14;
         const onHap = cx > HAP_BTN.x && cx < HAP_BTN.x + HAP_BTN.w && cy > HAP_BTN.y && cy < HAP_BTN.y + HAP_BTN.h;
-        const onMic = cx > MIC_BTN.x && cx < MIC_BTN.x + MIC_BTN.w && cy > MIC_BTN.y && cy < MIC_BTN.y + MIC_BTN.h;
         if (onVol) hv = true;
         if (onHap) hh = true;
-        if (onMic) hm = true;
         if (onVol && trig) { // drag the volume bar with the laser
           const nv = Math.round(Math.max(0, Math.min(1, (cx - VOL_BAR.x) / VOL_BAR.w)) * 20) / 20;
           if (nv !== masterVolume) { masterVolume = nv; saveSettings(); changed = true; dragPreview = true; }
@@ -1760,15 +1741,10 @@
           changed = true;
           if (hapticsOn) pulseHaptic(i, 2); // feel it turn on
         }
-        if (onMic && trig && !setTrigWas[i] && voice.micAvailable) { // tap the mic toggle
-          micOn = !micOn;
-          saveSettings(); // also applies mute/unmute to the live mic track
-          changed = true;
-        }
       }
       setTrigWas[i] = trig;
     }
-    if (hv !== hoverVol || hh !== hoverHap || hm !== hoverMic || changed) { hoverVol = hv; hoverHap = hh; hoverMic = hm; drawSettings(); }
+    if (hv !== hoverVol || hh !== hoverHap || changed) { hoverVol = hv; hoverHap = hh; drawSettings(); }
   }
 
   // ---------- level tracker + high score ----------
@@ -1890,13 +1866,10 @@
   // server everyone else connects to. The host merges everyone's positions and
   // broadcasts the world state ~15x a second. No accounts, no setup.
   const net = {
-    peer: null, isHost: false, conns: [], hostConn: null, hostId: '',
+    peer: null, isHost: false, conns: [], hostConn: null,
     others: new Map(), // id -> avatar
     sendT: 0, status: 'offline', count: 1, room: 'PUBLIC', name: 'GORILLA'
   };
-  // the world state keys the host's body as the literal string 'host';
-  // everyone else is keyed by their real peer id. Voice needs real ids.
-  function realPeerId(id) { return id === 'host' ? net.hostId : id; }
 
   function makeTag(name) {
     const c = document.createElement('canvas');
@@ -1965,7 +1938,6 @@
     const a = net.others.get(id);
     if (a) { scene.remove(a); net.others.delete(id); }
     net.count = 1 + net.others.size;
-    endVoiceCall(realPeerId(id)); // they left -> hang up
   }
 
   // my state: head + both hands, in world space (+ which way my head points)
@@ -1996,7 +1968,6 @@
       a.add(a.tag);
     }
     a.seen = performance.now();
-    ensureVoiceCall(realPeerId(id)); // hearing about a player -> make sure we can hear them
   }
   // shortest-way-around blend for angles, so heads never spin the long way past ±180°
   function lerpAngle(a, b, t) {
@@ -2047,109 +2018,15 @@
     }
   }
 
-  // ---------- VOICE CHAT ----------
-  // Rides the exact same peer-to-peer WebRTC pipe as the game — no extra
-  // service. Every player opens a direct audio call to every other player
-  // (rooms are small, so a full mesh is fine). To stop both sides ringing
-  // each other at once, only the player with the LOWER peer id places the
-  // call; the higher id just answers. Mute lives in the Y-button settings.
-  const voice = {
-    stream: null,        // our microphone (or a silent stand-in if it's blocked)
-    micAvailable: false, // did the mic permission actually come through?
-    calls: new Map()     // remote peer id -> { call, el, lastTry }
-  };
-  function initVoice() {
-    if (voice.stream) return;
-    const finish = s => { voice.stream = s; applyMicState(); };
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      }).then(s => { voice.micAvailable = true; finish(s); })
-        .catch(() => finish(silentStream())); // permission denied -> listen-only
-    } else {
-      finish(silentStream());
-    }
-  }
-  // a valid-but-silent audio track: players with a blocked mic still need
-  // SOME stream to place WebRTC calls with, so they can hear everyone else
-  function silentStream() {
-    try {
-      initAudio();
-      return audioCtx ? audioCtx.createMediaStreamDestination().stream : null;
-    } catch (e) { return null; }
-  }
-  function applyMicState() { // mute = disable the track (sends silence, keeps the call)
-    if (!voice.stream) return;
-    const on = voice.micAvailable && micOn;
-    voice.stream.getAudioTracks().forEach(t => { t.enabled = on; });
-  }
-  // other players' voices follow the Sound Volume slider (capped at 100% —
-  // the 1,000 setting is a sound-effects joke, not an ear hazard)
-  function voiceVolume() { return Math.max(0, Math.min(1, masterVolume)); }
-  function applyVoiceVolume() {
-    voice.calls.forEach(v => { if (v.el) v.el.volume = voiceVolume(); });
-  }
-  function wireCall(call) { // adopt a call (placed by us or answered) and play its audio
-    const id = call.peer;
-    const old = voice.calls.get(id);
-    if (old && old.call !== call) endVoiceCall(id); // replaced -> hang up the stale one
-    const entry = { call: call, el: null, lastTry: performance.now() };
-    voice.calls.set(id, entry);
-    call.on('stream', remote => {
-      // a hidden <audio> element is the reliable way to play WebRTC audio
-      const el = document.createElement('audio');
-      el.autoplay = true;
-      el.srcObject = remote;
-      el.volume = voiceVolume();
-      el.style.display = 'none';
-      document.body.appendChild(el);
-      el.play().catch(() => {}); // already inside a user gesture — should never block
-      entry.el = el;
-    });
-    const drop = () => {
-      if (entry.el) { entry.el.srcObject = null; entry.el.remove(); entry.el = null; }
-      if (voice.calls.get(id) === entry) voice.calls.delete(id);
-    };
-    call.on('close', drop);
-    call.on('error', drop);
-  }
-  // make sure a live call to this player exists — cheap, safe to run every update.
-  // A dead call retries itself after a few seconds, so voice self-heals.
-  function ensureVoiceCall(remoteId) {
-    if (!voice.stream || !net.peer || !net.peer.open) return;
-    const myId = net.peer.id;
-    if (!remoteId || remoteId === myId) return;
-    const cur = voice.calls.get(remoteId);
-    if (cur) {
-      if (cur.el || cur.call.open || performance.now() - cur.lastTry < 4000) return;
-      endVoiceCall(remoteId); // rang for 4s with no answer -> try again
-    }
-    if (myId < remoteId) { // lower id calls, higher id answers
-      try { wireCall(net.peer.call(remoteId, voice.stream)); } catch (e) {}
-    }
-  }
-  function endVoiceCall(remoteId) {
-    const v = voice.calls.get(remoteId);
-    if (!v) return;
-    voice.calls.delete(remoteId);
-    if (v.el) { v.el.srcObject = null; v.el.remove(); }
-    try { v.call.close(); } catch (e) {}
-  }
-  function attachVoice(p) { // every freshly created Peer answers incoming calls
-    p.on('call', call => { call.answer(voice.stream || undefined); wireCall(call); });
-  }
-
   function startNetworking(room) {
     if (typeof Peer === 'undefined') { net.status = 'offline'; return; }
     const hostId = 'virtualup-' + room + '-host';
-    net.hostId = hostId;
     net.status = 'connecting';
 
     function becomeClient() {
       net.isHost = false;
       const p = new Peer(); // random id
       net.peer = p;
-      attachVoice(p);
       p.on('open', () => {
         const c = p.connect(hostId, { reliable: false });
         net.hostConn = c;
@@ -2169,13 +2046,11 @@
     function tryHost() {
       const p = new Peer(hostId); // claim the room's host slot
       net.peer = p;
-      attachVoice(p);
       p.on('open', () => {
         net.isHost = true;
         net.status = 'hosting';
         p.on('connection', c => {
           net.conns.push(c);
-          ensureVoiceCall(c.peer); // greet the newcomer with voice right away
           c.on('data', d => { if (d && d.t === 'm') applyState(c.peer, d.s); });
           const drop = () => {
             net.conns = net.conns.filter(x => x !== c);
@@ -2248,7 +2123,6 @@
   // ---------- launch (called by the bootstrap once WebXR is granted) ----------
   window.__vuLaunch = function (session, room, name) {
     initAudio();
-    initVoice(); // ask for the microphone (a no is fine — you just listen)
     net.room = room || 'PUBLIC';
     net.name = (name || 'GORILLA').slice(0, 14);
     startNetworking(net.room);
