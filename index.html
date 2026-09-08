@@ -39,7 +39,7 @@
     </div>
     <button id="startvr">Start VR</button>
     <a href="https://discord.gg/eehKXCfCUj">Discord</a>
-    <div id="roomnote">VirtualUP Version 3.3.0</div>
+    <div id="roomnote">VirtualUP Version 4.0.0</div>
     <div id="iprow">checking IP…</div>
   </div>
 </div>
@@ -2203,7 +2203,7 @@
   // NOTE: a browser can only see your PUBLIC IP (what the internet sees), never
   // a Wi-Fi address like 192.168.x.x. The start page prints the IP it actually
   // sees — copy that one into this list.
-  const BLUE_IPS = ['72.222.251.197'];
+  const BLUE_IPS = []; // empty on purpose — blue is granted by the saved localStorage flag
   (function checkIP() {
     const ipEl = document.getElementById('iprow');
     const ctl = new AbortController();
