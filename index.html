@@ -24,6 +24,7 @@
   #startvr:active { background: #eee; }
   #roomnote { font: 14px Arial, sans-serif; color: #666; }
   #iprow { font: 12px monospace; color: #999; min-height: 14px; }
+  #microw { font: 12px monospace; color: #999; min-height: 14px; }
 </style>
 </head>
 <body>
@@ -39,8 +40,9 @@
     </div>
     <button id="startvr">Start VR</button>
     <a href="https://discord.gg/eehKXCfCUj">Discord</a>
-    <div id="roomnote">VirtualUP Version 4.1.0</div>
+    <div id="roomnote">VirtualUP Version 3.0.0</div>
     <div id="iprow">checking IP…</div>
+    <div id="microw">mic: not asked yet</div>
   </div>
 </div>
 <script type="text/plain" id="gamecode">
@@ -1786,18 +1788,18 @@
 
   // the pause HUD — level + high score at the very top of your view
   const hudCvs = document.createElement('canvas');
-  hudCvs.width = 512; hudCvs.height = 200;
+  hudCvs.width = 512; hudCvs.height = 232;
   const hudCtx = hudCvs.getContext('2d');
   const hudTex = new THREE.CanvasTexture(hudCvs);
   const hudPanel = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.62, 0.242),
+    new THREE.PlaneGeometry(0.62, 0.281),
     new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, depthTest: false })
   );
   hudPanel.renderOrder = 1006;
   hudPanel.position.set(0, 0.42, -1.2); // top of the screen
   function drawHud() {
     const g = hudCtx;
-    g.clearRect(0, 0, 512, 170);
+    g.clearRect(0, 0, 512, 232);
     g.textAlign = 'center';
     g.lineWidth = 8; g.strokeStyle = '#123c26';
     g.font = 'bold 58px Trebuchet MS';
@@ -1816,6 +1818,13 @@
     g.strokeText(label, 256, 168);
     g.fillStyle = '#8fd8a8';
     g.fillText(label, 256, 168);
+    // mic status (why voice isn't working, if it isn't)
+    g.font = 'bold 22px Trebuchet MS'; g.lineWidth = 6;
+    const micLabel = 'mic: ' + (voice.mic ? 'on · ' + voice.calls.size + ' voice link' + (voice.calls.size === 1 ? '' : 's')
+                                          : (window.__vuMicInfo ? window.__vuMicInfo() : 'off')).slice(0, 60);
+    g.strokeText(micLabel, 256, 208);
+    g.fillStyle = voice.mic ? '#8fd8a8' : '#ffb347';
+    g.fillText(micLabel, 256, 208);
     hudTex.needsUpdate = true;
   }
 
@@ -1882,7 +1891,7 @@
   // server everyone else connects to. The host merges everyone's positions and
   // broadcasts the world state ~15x a second. No accounts, no setup.
   const net = {
-    peer: null, isHost: false, conns: [], hostConn: null,
+    peer: null, isHost: false, conns: [], hostConn: null, hostId: '',
     others: new Map(), // id -> avatar
     sendT: 0, status: 'offline', count: 1, room: 'PUBLIC', name: 'GORILLA'
   };
@@ -1948,13 +1957,14 @@
     g.tHead = new THREE.Vector3(); g.tL = new THREE.Vector3(); g.tR = new THREE.Vector3();
     g.tYaw = 0; g.tPitch = 0; // which way their face should point
     g.blue = false;           // wearing the blue skin?
+    g.voice = null; g.voiceEl = null; g.voiceStream = null; // their voice, playing from their head
     g.color = 0; // 0 = purple, 1 = blue
     scene.add(g);
     return g;
   }
   function removeAvatar(id) {
     const a = net.others.get(id);
-    if (a) { scene.remove(a); net.others.delete(id); }
+    if (a) { voiceDrop(id); scene.remove(a); net.others.delete(id); }
     net.count = 1 + net.others.size;
   }
 
@@ -1974,7 +1984,10 @@
   function applyState(id, s) {
     if (!s || !s.h) return;
     let a = net.others.get(id);
-    if (!a) { a = makeAvatar(); net.others.set(id, a); net.count = 1 + net.others.size; }
+    if (!a) {
+      a = makeAvatar(); net.others.set(id, a); net.count = 1 + net.others.size;
+      voiceAttach(id === 'host' ? net.hostId : id); // their voice may have arrived before their body
+    }
     a.tHead.set(s.h[0], s.h[1], s.h[2]);
     a.tL.set(s.l[0], s.l[1], s.l[2]);
     a.tR.set(s.r[0], s.r[1], s.r[2]);
@@ -2018,6 +2031,8 @@
   }
 
   function netTick(dt) {
+    voice.syncT += dt;
+    if (voice.syncT >= 2) { voice.syncT = 0; voiceSync(); }
     net.sendT += dt;
     if (net.sendT < 1 / 15) return; // 15 updates a second
     net.sendT = 0;
@@ -2042,40 +2057,220 @@
     }
   }
 
+  // ---------- voice chat ----------
+  // Everyone streams their mic straight to everyone else (a mesh of PeerJS
+  // media calls — the host only relays positions, not audio). Each voice plays
+  // out of that player's head with distance falloff, through the game's own
+  // audio context, so the teleport blackout silences voices too. To avoid two
+  // calls per pair, the peer with the smaller id is the one who places it.
+  const voice = {
+    mic: null,           // our microphone stream (null = listen only)
+    out: null,           // what we send on calls: the mic, or a silent stream
+    listener: null,      // THREE.AudioListener riding on the camera
+    calls: new Map(),    // peer id -> MediaConnection
+    streams: new Map(),  // peer id -> their incoming MediaStream
+    tried: new Map(),    // peer id -> when we last placed a call (retry cooldown)
+    syncT: 0
+  };
+
+  function initVoice(mic) {
+    if (!audioCtx || voice.listener) return;
+    try {
+      THREE.AudioContext.setContext(audioCtx);
+      voice.listener = new THREE.AudioListener();
+      camera.add(voice.listener);
+      voice.mic = mic || null;
+      // PeerJS needs a stream to place or answer a call, even if we only listen
+      voice.out = mic || audioCtx.createMediaStreamDestination().stream;
+    } catch (e) {
+      voice.mic = null; voice.out = null;
+      if (window.__vuMicInfo) window.__vuMicInfo = () => 'voice setup failed: ' + (e && e.message);
+    }
+  }
+
+  const avatarKey = id => (id === net.hostId ? 'host' : id);
+
+  function voiceHook(id, call) {
+    const old = voice.calls.get(id);
+    if (old && old !== call) { try { old.close(); } catch (e) {} }
+    voice.calls.set(id, call);
+    call.__vuT = performance.now();
+    call.on('stream', s => { voice.streams.set(id, s); voiceAttach(id); });
+    const gone = () => {
+      if (voice.calls.get(id) !== call) return; // already replaced
+      voice.calls.delete(id); voice.streams.delete(id);
+      const a = net.others.get(avatarKey(id));
+      if (a) voiceSilence(a);
+    };
+    call.on('close', gone);
+    call.on('error', gone);
+  }
+
+  function voiceAnswer(call) {
+    if (!voice.out) { try { call.close(); } catch (e) {} return; }
+    try { call.answer(voice.out); } catch (e) { return; }
+    voiceHook(call.peer, call);
+  }
+
+  // wire an incoming stream into the speaker on that player's head
+  function voiceAttach(id) {
+    const s = voice.streams.get(id), a = net.others.get(avatarKey(id));
+    if (!s || !a || !voice.listener || a.voiceStream === s) return;
+    voiceSilence(a);
+    // Chromium quirk: a remote WebRTC track stays silent inside Web Audio unless
+    // an <audio> element is also playing it — so keep a muted one per voice.
+    const el = document.createElement('audio');
+    el.srcObject = s; el.muted = true; el.autoplay = true; el.style.display = 'none';
+    document.body.appendChild(el);
+    el.play().catch(() => {});
+    const pa = new THREE.PositionalAudio(voice.listener);
+    pa.setMediaStreamSource(s);
+    pa.setDistanceModel('inverse');
+    pa.setRefDistance(1.5);   // full volume within ~1.5 m
+    pa.setRolloffFactor(1.4); // fades with distance
+    pa.setMaxDistance(60);
+    a.head.add(pa);
+    a.voice = pa; a.voiceEl = el; a.voiceStream = s;
+  }
+
+  function voiceSilence(a) {
+    if (a.voice) { try { a.voice.disconnect(); } catch (e) {} a.head.remove(a.voice); a.voice = null; }
+    if (a.voiceEl) { try { a.voiceEl.pause(); a.voiceEl.srcObject = null; a.voiceEl.remove(); } catch (e) {} a.voiceEl = null; }
+    a.voiceStream = null;
+  }
+
+  // that player left (or we're resetting): hang up and silence their head
+  function voiceDrop(key) {
+    const id = key === 'host' ? net.hostId : key;
+    const call = voice.calls.get(id);
+    if (call) { voice.calls.delete(id); try { call.close(); } catch (e) {} }
+    voice.streams.delete(id);
+    const a = net.others.get(key);
+    if (a) voiceSilence(a);
+  }
+
+  function voiceCloseAll() {
+    voice.calls.forEach(call => { try { call.close(); } catch (e) {} });
+    voice.calls.clear(); voice.streams.clear(); voice.tried.clear();
+    net.others.forEach(a => voiceSilence(a));
+  }
+
+  // every couple of seconds: call anyone we should be talking to but aren't,
+  // hang up on anyone who's gone, and retry calls that never connected
+  function voiceSync() {
+    const p = net.peer;
+    if (!p || !p.id || p.destroyed || !voice.out) return;
+    const want = new Set();
+    if (net.isHost) {
+      for (const c of net.conns) if (c.open) want.add(c.peer);
+    } else if (net.hostConn && net.hostConn.open) {
+      want.add(net.hostId);
+      net.others.forEach((a, key) => { if (key !== 'host') want.add(key); });
+    }
+    const now = performance.now();
+    voice.calls.forEach((call, id) => {
+      const stale = !call.open && now - call.__vuT > 10000; // rang for 10 s, nobody picked up
+      if (!want.has(id) || stale) { voice.calls.delete(id); try { call.close(); } catch (e) {} }
+    });
+    want.forEach(id => {
+      if (voice.calls.has(id) || !(p.id < id)) return; // already talking, or it's their job to call us
+      if (now - (voice.tried.get(id) || -1e9) < 5000) return; // don't hammer a call that keeps failing
+      voice.tried.set(id, now);
+      try { voiceHook(id, p.call(id, voice.out)); } catch (e) {}
+    });
+  }
+
   function startNetworking(room) {
     if (typeof Peer === 'undefined') { net.status = 'offline'; return; }
     const hostId = 'virtualup-' + room + '-host';
+    net.hostId = hostId;
+    net.attempt = 0; net.retryTimer = null; net.joinTimer = null;
     net.status = 'connecting';
+
+    // Any callback from an old peer checks this first, so a link we already
+    // gave up on can't fire "host left" a second time and double-reconnect.
+    const live = p => net.peer === p;
+
+    // drop everything from the current session: peer, links, timers, avatars
+    function teardown() {
+      if (net.joinTimer) { clearTimeout(net.joinTimer); net.joinTimer = null; }
+      const p = net.peer;
+      net.peer = null; // null it BEFORE destroy so the peer's own close events are ignored
+      net.hostConn = null; net.conns = []; net.isHost = false;
+      voiceCloseAll();
+      if (p) { try { p.destroy(); } catch (e) {} }
+      Array.from(net.others.keys()).forEach(id => removeAvatar(id));
+      net.count = 1;
+    }
+
+    // after any drop: clean up, wait (a bit longer each failed try, max 10s), start over
+    function scheduleReconnect(why) {
+      if (net.retryTimer) return; // one at a time
+      teardown();
+      net.status = why + ', reconnecting…';
+      const delay = Math.min(1500 * Math.pow(1.6, net.attempt), 10000) + Math.random() * 500;
+      net.attempt++;
+      net.retryTimer = setTimeout(() => { net.retryTimer = null; tryHost(); }, delay);
+    }
+
+    // lost the signalling server (headset asleep, wifi blip): try to resume in place
+    function onSignalLost(p) {
+      if (!live(p) || p.destroyed) return;
+      try { p.reconnect(); } catch (e) { scheduleReconnect('signal lost'); }
+    }
 
     function becomeClient() {
       net.isHost = false;
+      net.status = 'joining';
       const p = new Peer(); // random id
       net.peer = p;
       p.on('open', () => {
+        if (!live(p)) return;
         const c = p.connect(hostId, { reliable: false });
         net.hostConn = c;
-        c.on('open', () => { net.status = 'connected'; });
+        // the host has a few seconds to answer, or we assume it's a stale id and start over
+        net.joinTimer = setTimeout(() => {
+          net.joinTimer = null;
+          if (live(p) && !c.open) scheduleReconnect('host not answering');
+        }, 7000);
+        c.on('open', () => {
+          if (!live(p)) return;
+          if (net.joinTimer) { clearTimeout(net.joinTimer); net.joinTimer = null; }
+          net.status = 'connected'; net.attempt = 0;
+          voiceSync();
+        });
         c.on('data', d => {
-          if (!d || d.t !== 'w') return;
+          if (!live(p) || !d || d.t !== 'w') return;
           const seen = new Set();
           for (const id in d.p) { applyState(id, d.p[id]); seen.add(id); }
           net.others.forEach((a, id) => { if (!seen.has(id)) removeAvatar(id); });
         });
-        c.on('close', () => { net.status = 'host left'; net.others.forEach((a, id) => removeAvatar(id)); tryHost(); });
-        c.on('error', () => { net.status = 'error'; });
+        c.on('close', () => { if (live(p)) scheduleReconnect('host left'); });
+        c.on('error', () => { if (live(p)) scheduleReconnect('connection lost'); });
       });
-      p.on('error', () => { net.status = 'error'; });
+      p.on('call', call => { if (live(p)) voiceAnswer(call); });
+      p.on('disconnected', () => onSignalLost(p));
+      p.on('error', err => {
+        if (!live(p)) return;
+        const t = err && err.type;
+        // peer-unavailable = the host id exists on paper but nobody's behind it (host just left)
+        scheduleReconnect(t === 'peer-unavailable' ? 'host gone' : 'error');
+      });
     }
 
     function tryHost() {
+      net.status = 'connecting';
       const p = new Peer(hostId); // claim the room's host slot
       net.peer = p;
       p.on('open', () => {
+        if (!live(p)) return;
         net.isHost = true;
-        net.status = 'hosting';
+        net.status = 'hosting'; net.attempt = 0;
         p.on('connection', c => {
+          if (!live(p)) return;
           net.conns.push(c);
-          c.on('data', d => { if (d && d.t === 'm') applyState(c.peer, d.s); });
+          c.on('open', () => { if (live(p)) voiceSync(); });
+          c.on('data', d => { if (live(p) && d && d.t === 'm') applyState(c.peer, d.s); });
           const drop = () => {
             net.conns = net.conns.filter(x => x !== c);
             removeAvatar(c.peer);
@@ -2084,13 +2279,17 @@
           c.on('error', drop);
         });
       });
+      p.on('call', call => { if (live(p)) voiceAnswer(call); });
+      p.on('disconnected', () => onSignalLost(p));
       p.on('error', err => {
+        if (!live(p)) return;
         // id already taken -> somebody's already hosting; join them instead
         if (err && (err.type === 'unavailable-id' || String(err).indexOf('taken') >= 0)) {
+          net.peer = null; // detach first so this peer's close events are ignored
           try { p.destroy(); } catch (e) {}
           becomeClient();
         } else {
-          net.status = 'error';
+          scheduleReconnect('error');
         }
       });
     }
@@ -2145,8 +2344,9 @@
   });
 
   // ---------- launch (called by the bootstrap once WebXR is granted) ----------
-  window.__vuLaunch = function (session, room, name) {
+  window.__vuLaunch = function (session, room, name, mic) {
     initAudio();
+    initVoice(mic);
     net.room = room || 'PUBLIC';
     net.name = (name || 'GORILLA').slice(0, 14);
     startNetworking(net.room);
@@ -2256,7 +2456,36 @@
       .catch(function () { clearTimeout(timer); ipEl.textContent = ''; });
   })();
 
-  let launching = false, gameReady = false;
+  let launching = false, gameReady = false, micPromise = null;
+
+  // ---- microphone ----
+  // Figures out exactly why a mic isn't available, since a silent failure is
+  // impossible to debug from inside a headset. Result is shown on the start
+  // page (#microw) and handed to the game for the pause HUD.
+  let micInfo = 'not asked yet';
+  function setMicInfo(s) {
+    micInfo = s;
+    const el = document.getElementById('microw');
+    if (el) el.textContent = 'mic: ' + s;
+  }
+  window.__vuMicInfo = function () { return micInfo; };
+  function askMic() {
+    if (!window.isSecureContext) { setMicInfo('blocked — page must be https'); return Promise.resolve(null); }
+    if (window.top !== window.self) { setMicInfo('blocked — page is inside an iframe; it needs allow="microphone"'); return Promise.resolve(null); }
+    const md = navigator.mediaDevices;
+    if (!md || !md.getUserMedia) { setMicInfo('not supported by this browser'); return Promise.resolve(null); }
+    setMicInfo('asking… (look for a permission popup)');
+    return md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+      .then(function (s) { setMicInfo('on'); return s; })
+      .catch(function (e) {
+        const n = (e && e.name) || 'error';
+        setMicInfo(n === 'NotAllowedError' ? 'blocked (' + n + ') — reset the site\'s mic permission in browser settings'
+                 : n === 'NotFoundError' ? 'no microphone found'
+                 : n === 'NotReadableError' ? 'mic busy or blocked by the OS (' + n + ')'
+                 : 'failed (' + n + ')');
+        return null;
+      });
+  }
   function loadLibs(done, fail) {
     let pending = 0, failed = false;
     function need(src, ready) {
@@ -2289,14 +2518,21 @@
       .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'PUBLIC';
     try { localStorage.setItem('virtualup-name', name); localStorage.setItem('virtualup-room', room); } catch (e) {}
 
+    // Voice chat: ask for the mic once, right here inside the tap (some browsers
+    // only allow it from a user gesture). Denied or unavailable -> listen-only,
+    // and the reason is shown on the start page and in the pause HUD.
+    if (!micPromise) micPromise = askMic();
+
     function enterVR() {
-      navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
-        .then(function (session) {
-          window.__vuLaunch(session, room, name); // world is already built — frames start immediately
-          page.style.display = 'none';
-          btn.textContent = 'Start VR';
-          launching = false;
-        })
+      micPromise.then(function (mic) {
+        return navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
+          .then(function (session) {
+            window.__vuLaunch(session, room, name, mic); // world is already built — frames start immediately
+            page.style.display = 'none';
+            btn.textContent = 'Start VR';
+            launching = false;
+          });
+      })
         .catch(function () {
           // the browser wants a fresh tap now that loading is done
           launching = false;
