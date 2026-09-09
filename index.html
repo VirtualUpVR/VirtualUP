@@ -39,7 +39,7 @@
     </div>
     <button id="startvr">Start VR</button>
     <a href="https://discord.gg/eehKXCfCUj">Discord</a>
-    <div id="roomnote">VirtualUP Version 4.1.0</div>
+    <div id="roomnote">VirtualUP Version 5.0.0 - Voice Chat</div>
     <div id="iprow">checking IP…</div>
   </div>
 </div>
@@ -2045,37 +2045,89 @@
   function startNetworking(room) {
     if (typeof Peer === 'undefined') { net.status = 'offline'; return; }
     const hostId = 'virtualup-' + room + '-host';
+    net.attempt = 0; net.retryTimer = null; net.joinTimer = null;
     net.status = 'connecting';
+
+    // Any callback from an old peer checks this first, so a link we already
+    // gave up on can't fire "host left" a second time and double-reconnect.
+    const live = p => net.peer === p;
+
+    // drop everything from the current session: peer, links, timers, avatars
+    function teardown() {
+      if (net.joinTimer) { clearTimeout(net.joinTimer); net.joinTimer = null; }
+      const p = net.peer;
+      net.peer = null; // null it BEFORE destroy so the peer's own close events are ignored
+      net.hostConn = null; net.conns = []; net.isHost = false;
+      if (p) { try { p.destroy(); } catch (e) {} }
+      Array.from(net.others.keys()).forEach(id => removeAvatar(id));
+      net.count = 1;
+    }
+
+    // after any drop: clean up, wait (a bit longer each failed try, max 10s), start over
+    function scheduleReconnect(why) {
+      if (net.retryTimer) return; // one at a time
+      teardown();
+      net.status = why + ', reconnecting…';
+      const delay = Math.min(1500 * Math.pow(1.6, net.attempt), 10000) + Math.random() * 500;
+      net.attempt++;
+      net.retryTimer = setTimeout(() => { net.retryTimer = null; tryHost(); }, delay);
+    }
+
+    // lost the signalling server (headset asleep, wifi blip): try to resume in place
+    function onSignalLost(p) {
+      if (!live(p) || p.destroyed) return;
+      try { p.reconnect(); } catch (e) { scheduleReconnect('signal lost'); }
+    }
 
     function becomeClient() {
       net.isHost = false;
+      net.status = 'joining';
       const p = new Peer(); // random id
       net.peer = p;
       p.on('open', () => {
+        if (!live(p)) return;
         const c = p.connect(hostId, { reliable: false });
         net.hostConn = c;
-        c.on('open', () => { net.status = 'connected'; });
+        // the host has a few seconds to answer, or we assume it's a stale id and start over
+        net.joinTimer = setTimeout(() => {
+          net.joinTimer = null;
+          if (live(p) && !c.open) scheduleReconnect('host not answering');
+        }, 7000);
+        c.on('open', () => {
+          if (!live(p)) return;
+          if (net.joinTimer) { clearTimeout(net.joinTimer); net.joinTimer = null; }
+          net.status = 'connected'; net.attempt = 0;
+        });
         c.on('data', d => {
-          if (!d || d.t !== 'w') return;
+          if (!live(p) || !d || d.t !== 'w') return;
           const seen = new Set();
           for (const id in d.p) { applyState(id, d.p[id]); seen.add(id); }
           net.others.forEach((a, id) => { if (!seen.has(id)) removeAvatar(id); });
         });
-        c.on('close', () => { net.status = 'host left'; net.others.forEach((a, id) => removeAvatar(id)); tryHost(); });
-        c.on('error', () => { net.status = 'error'; });
+        c.on('close', () => { if (live(p)) scheduleReconnect('host left'); });
+        c.on('error', () => { if (live(p)) scheduleReconnect('connection lost'); });
       });
-      p.on('error', () => { net.status = 'error'; });
+      p.on('disconnected', () => onSignalLost(p));
+      p.on('error', err => {
+        if (!live(p)) return;
+        const t = err && err.type;
+        // peer-unavailable = the host id exists on paper but nobody's behind it (host just left)
+        scheduleReconnect(t === 'peer-unavailable' ? 'host gone' : 'error');
+      });
     }
 
     function tryHost() {
+      net.status = 'connecting';
       const p = new Peer(hostId); // claim the room's host slot
       net.peer = p;
       p.on('open', () => {
+        if (!live(p)) return;
         net.isHost = true;
-        net.status = 'hosting';
+        net.status = 'hosting'; net.attempt = 0;
         p.on('connection', c => {
+          if (!live(p)) return;
           net.conns.push(c);
-          c.on('data', d => { if (d && d.t === 'm') applyState(c.peer, d.s); });
+          c.on('data', d => { if (live(p) && d && d.t === 'm') applyState(c.peer, d.s); });
           const drop = () => {
             net.conns = net.conns.filter(x => x !== c);
             removeAvatar(c.peer);
@@ -2084,13 +2136,16 @@
           c.on('error', drop);
         });
       });
+      p.on('disconnected', () => onSignalLost(p));
       p.on('error', err => {
+        if (!live(p)) return;
         // id already taken -> somebody's already hosting; join them instead
         if (err && (err.type === 'unavailable-id' || String(err).indexOf('taken') >= 0)) {
+          net.peer = null; // detach first so this peer's close events are ignored
           try { p.destroy(); } catch (e) {}
           becomeClient();
         } else {
-          net.status = 'error';
+          scheduleReconnect('error');
         }
       });
     }
