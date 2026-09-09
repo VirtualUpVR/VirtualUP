@@ -39,7 +39,7 @@
     </div>
     <button id="startvr">Start VR</button>
     <a href="https://discord.gg/eehKXCfCUj">Discord</a>
-    <div id="roomnote">VirtualUP Version 4.0.1</div>
+    <div id="roomnote">VirtualUP Version 4.1.0</div>
     <div id="iprow">checking IP…</div>
   </div>
 </div>
@@ -2188,6 +2188,38 @@
     bar.textContent = 'Game error: ' + msg;
   }
   window.addEventListener('error', function (e) { showError(e.message || 'unknown script error'); });
+
+  // ---- devtools guard ----
+  // If dev tools look open, leave for about:blank. Checks every second:
+  //  1. a `debugger` statement only pauses when dev tools are attached (docked,
+  //     undocked, or remote via chrome://inspect) — a long pause means open.
+  //  2. on desktop 1:1 displays, docked tools shrink the inner window a lot
+  //     (skipped on the Quest browser and zoomed pages to avoid false alarms).
+  // Also eats the usual open-devtools shortcuts and the right-click menu.
+  // Developing? Comment out the devtoolsGuard() call below while you work.
+  (function devtoolsGuard() {
+    function bail() {
+      try { location.replace('about:blank'); } catch (e) { location.href = 'about:blank'; }
+    }
+    const onQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
+    setInterval(function () {
+      const t0 = performance.now();
+      debugger;
+      if (performance.now() - t0 > 150) bail();
+      if (!onQuest && window.devicePixelRatio === 1 &&
+          (window.outerWidth - window.innerWidth > 200 ||
+           window.outerHeight - window.innerHeight > 300)) bail();
+    }, 1000);
+    window.addEventListener('keydown', function (e) {
+      const k = (e.key || '').toUpperCase();
+      if (k === 'F12' ||
+          (e.ctrlKey && e.shiftKey && (k === 'I' || k === 'J' || k === 'C')) ||
+          (e.metaKey && e.altKey && (k === 'I' || k === 'J' || k === 'C')) ||
+          ((e.ctrlKey || e.metaKey) && k === 'U')) { e.preventDefault(); bail(); }
+    }, true);
+    window.addEventListener('contextmenu', function (e) { e.preventDefault(); }, true);
+  })();
+
   const page = document.getElementById('startpage');
   const btn = document.getElementById('startvr');
   try {
